@@ -14,7 +14,7 @@ add_definitions(-DENABLE_DVPP_INTERFACE)
 set(Euler open)
 
 # Specify target generation path
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "../out")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "../../../out")
 set(CMAKE_CXX_FLAGS_DEBUG "-fPIC -O0 -g -Wall")
 set(CMAKE_CXX_FLAGS_RELEASE "-fPIC -O2 -Wall")
 
