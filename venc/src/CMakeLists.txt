@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.11)
 
 # project information
-project(TARGET_NAME venc)
+project(venc)
 
 # Compile options
 #set(CMAKE_CXX_STANDARD 17)
