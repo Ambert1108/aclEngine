@@ -27,7 +27,7 @@
 
 using namespace std;
 namespace {
-  int32_t deviceId;
+  int32_t deviceId = 0;
   aclrtContext context;
   aclrtStream stream;
   aclrtRunMode runMode;
