@@ -2,19 +2,32 @@
 set(TARGET_NAME venc)
 
 # Compile options
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+#set(CMAKE_CXX_STANDARD 17)
+#set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_compile_options(-std=c++11)
 
 add_definitions(-DENABLE_DVPP_INTERFACE)
+
+# Set up environment
+set(Euler open)
 
 # Specify target generation path
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "../out")
 set(CMAKE_CXX_FLAGS_DEBUG "-fPIC -O0 -g -Wall")
 set(CMAKE_CXX_FLAGS_RELEASE "-fPIC -O2 -Wall")
 
-set(ENV{INSTALL_DIR} /usr/local/Ascend/ascend-toolkit/latest)
-set(ENV{CPU_ARCH} aarch64)
-set(ENV{THIRDPART_PATH} /tmp/Ascend/thirdpart/$ENV{CPU_ARCH})
+if(${Euler} MATCHES "open")
+    set(ENV{INSTALL_DIR} /usr/local/Ascend/ascend-toolkit/latest)
+    set(ENV{CPU_ARCH} aarch64)
+    set(ENV{THIRDPART_PATH} /usr/local/Ascend/thirdpart/$ENV{CPU_ARCH})
+    message("Run Environment: openEuler")
+else()
+    set(ENV{INSTALL_DIR} /usr/local/Ascend/ascend-toolkit/latest)
+    set(ENV{CPU_ARCH} aarch64)
+    set(ENV{THIRDPART_PATH} /tmp/Ascend/thirdpart/$ENV{CPU_ARCH})
+    message("Run Environment: other")
+endif()
+
 
 if (NOT DEFINED ENV{INSTALL_DIR})
     message(FATAL_ERROR "Not Defined INSTALL_DIR")
@@ -49,12 +62,12 @@ include_directories(
 
 # add host lib path
 link_directories(
-    $ENV{INSTALL_DIR}/runtime/lib64/stub
+    $ENV{INSTALL_DIR}/runtime/lib64/stub/
     ${THIRDPART_PATH}/lib/
 )
 
 add_executable(main
-        main.cpp "main.h")
+        main.cpp)
 
 #target_link_libraries(main
 #        ascendcl acl_dvpp pthread stdc++)

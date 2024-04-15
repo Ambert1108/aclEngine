@@ -160,7 +160,7 @@ Result InitResource()
   const char* aclConfigPath = "../src/acl.json";
   aclError ret = aclInit(aclConfigPath);
   if (ret != ACL_SUCCESS) {
-    ERROR_LOG("Acl init failed");
+    ERROR_LOG("Acl init failed, res=%d", ret);
     return FAILED;
   }
   INFO_LOG("Acl init success");
