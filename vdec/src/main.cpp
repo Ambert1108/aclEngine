@@ -96,6 +96,7 @@ void* ThreadFunc(aclrtContext sharedContext)
   }
   return nullptr;
 }
+
 bool WriteToFile(const char* fileName, const void* dataDev, uint32_t dataSize)
 {
   if (dataSize <= 0) {
@@ -161,15 +162,38 @@ void DestroyResource()
 
 int main()
 {
-  /* 1.ACL initialization */
+  /* 1.ACL 初始化，不再使用 ACL 相关资源时需要调用 ACL 去初始化aclFinalize接口 */
   const char* aclConfigPath = "../src/acl.json";
   aclError ret = aclInit(aclConfigPath);
-  int channelId = 10;
 
-  /* 2.Run the management resource application, including Device, Context, Stream */
+  /* 2.运行管理资源应用，包括Device、Context、Stream */
+
+  /* 指定当前线程中用于运算的Device，同时隐式创建默认Context */
   ret = aclrtSetDevice(deviceId_);
+
+  /**
+  * 在当前进程或线程中显式创建一个Context
+  * 若不调用aclrtCreateContext接口显式创建Context，那系统会使用默认Context，
+    该默认Context是在调用aclrtSetDevice接口时隐式创建的
+  * 隐式创建Context：适合简单、无复杂交互逻辑的应用，但缺点在于，在多线程编程中，执行结果取决于线程调度的顺序
+  * 显式创建Context：推荐显式，适合大型、复杂交互逻辑的应用，且便于提高程序的可读性、可维护性
+  * 在某一进程中指定Device，该进程内的多个线程可共用在此Device上显式创建的Context（调用aclrtCreateContext接口显式创建Context）
+  * 若在某一进程内创建多个Context（Context的数量与Stream相关，Stream数量有限制，请参见aclrtCreateStream），当前线程在同一时刻
+    内只能使用其中一个Context，建议通过aclrtSetCurrentContext接口明确指定当前线程的Context，增加程序的可维护性
+  */
   ret = aclrtCreateContext(&context_, deviceId_);
+
+  /**
+  * 每个Context对应一个默认Stream，该默认Stream是调用aclrtSetDevice接口或aclrtCreateContext接口隐式创建的。
+    推荐调用aclrtCreateStream接口显式创建Stream
+  * 隐式创建Stream：适合简单、无复杂交互逻辑的应用，但缺点在于，在多线程编程中，执行结果取决于线程调度的顺序 
+  * 显式创建Stream：推荐显式，适合大型、复杂交互逻辑的应用，且便于提高程序的可读性、可维护性 
+  * Atlas 200/300/500 推理产品，硬件资源最多支持1024个Stream，如果已存在多个默认Stream，只能显式创建
+    N个Stream（N=1024-默认Stream个数-执行内部同步的Stream个数）
+  */
   ret = aclrtCreateStream(&stream_);
+
+  /* 获取当前昇腾AI软件栈的运行模式:DEVICE or HOST */
   aclrtGetRunMode(&runMode);
 
   DIR* dir;
@@ -180,23 +204,49 @@ int main()
   // create threadId
   pthread_create(&threadId_, nullptr, ThreadFunc, context_);
 
-  /* 4.Set the properties of the channel description information when creating the video code stream
-   processing channel, in which the callback callback function needs to be created in advance by the
-   user. */
+  /* 4.创建aclvdecChannelDesc类型的数据，表示创建视频解码处理通道时的通道描述信息。
+     如需销毁aclvdecChannelDesc类型的数据，请参见aclvdecDestroyChannelDesc */
    //vdecChannelDesc_ is aclvdecChannelDesc
   vdecChannelDesc_ = aclvdecCreateChannelDesc();
 
+  //调用以下函需要提前调用aclvdecCreateChannelDesc接口创建aclvdecChannelDesc类型的数据
+  int channelId = 10;
+  /* 设置视频解码处理通道描述信息的属性：解码通道号 */
   ret = aclvdecSetChannelDescChannelId(vdecChannelDesc_, channelId);
+
+  /* 设置视频解码处理通道描述信息的属性：回调线程ID */
   ret = aclvdecSetChannelDescThreadId(vdecChannelDesc_, threadId_);
-  /* Sets the callback function */
+
+  /* 设置视频解码处理通道描述信息的属性：回调函数 */
   ret = aclvdecSetChannelDescCallback(vdecChannelDesc_, callback);
 
-  // The H265_MAIN_LEVEL video encoding protocol is used in the example
+  /**
+  * 设置视频解码处理通道描述信息的属性：视频编码协议
+  * 0：H265_MAIN_LEVEL
+  * 1：H264_BASELINE_LEVEL
+  * 2：H264_MAIN_LEVEL
+  * 3：H264_HIGH_LEVEL
+  */
+  // 示例中使用H265_MAIN_LEVEL视频编码协议
   ret = aclvdecSetChannelDescEnType(vdecChannelDesc_, static_cast<acldvppStreamFormat>(enType_));
+
+  /**
+  * 设置视频解码处理通道描述信息的属性：YUV图像存储格式
+  * out_pic_format：int，YUV图像存储格式，支持如下格式：
+  *   YUV420SP NV12
+  *   YUV420SP NV21
+  *   RGB888，Atlas 200/300/500 推理产品不支持该格式
+  *   BGR888，Atlas 200/300/500 推理产品不支持该格式
+  * 如果不设置输出格式，默认使用YUV420SP NV12
+  */
   // PIXEL_FORMAT_YVU_SEMIPLANAR_420
   ret = aclvdecSetChannelDescOutPicFormat(vdecChannelDesc_, static_cast<acldvppPixelFormat>(format_));
 
-  /* 5.Create video stream processing channel */
+  /**
+  * 创建视频解码处理的通道，同一个通道可以重复使用，销毁后不再可用，同步接口
+  * 通道为非线程安全，即不同线程要求创建不同的通道
+  * 通道数最多为256个，见https://www.hiascend.com/document/detail/zh/canncommercial/700/inferapplicationdev/aclcppdevg/aclcppdevg_03_0239.html#:~:text=%E5%85%B1%E7%94%A8%E9%80%9A%E9%81%93%E4%B8%94-,%E9%80%9A%E9%81%93%E6%95%B0%E6%9C%80%E5%A4%9A256,-%EF%BC%8CJPEGE%E4%B8%8EVENC
+  */
   ret = aclvdecCreateChannel(vdecChannelDesc_);
 
   /* Video decoding processing */
@@ -205,21 +255,21 @@ int main()
   uint32_t inBufferSize = 0;
   size_t dataSize = (INPUT_WIDTH * INPUT_HEIGHT * 3) / 2;
 
-  // read file to device memory
+  /* 读取文件数据到设备内存 */
   ReadFileToDeviceMem(filePath.c_str(), inBufferDev, inBufferSize);
 
-  // Create input video stream description information, set the properties of the stream information
+  // 创建输入视频流描述信息，设置流信息的属性
   streamInputDesc_ = acldvppCreateStreamDesc();
   while (restLen > 0) {
 
-    // inBufferDev means the memory for input video data by Device, and inBufferSize means the memory size
+    // inBufferDev表示视频数据输入Device的内存地址，inBufferSize表示内存大小
     ret = acldvppSetStreamDescData(streamInputDesc_, inBufferDev);
     ret = acldvppSetStreamDescSize(streamInputDesc_, inBufferSize);
 
-    // Device memory g_picOutBufferDev is used to store output data decoded by VDEC
+    // 设备内存g_picOutBufferDev用于存储VDEC解码后的输出数据
     ret = acldvppMalloc(&g_picOutBufferDev, dataSize);
 
-    // Create output image description information, set the image description information properties
+    // 创建输出图像描述信息，设置图像描述信息属性
     // picOutputDesc_ is acldvppPicDesc
     picOutputDesc_ = acldvppCreatePicDesc();
     ret = acldvppSetPicDescData(picOutputDesc_, g_picOutBufferDev);
