@@ -27,7 +27,7 @@
 
 using namespace std;
 namespace {
-  int32_t deviceId = 0;
+  int32_t deviceId;
   aclrtContext context;
   aclrtStream stream;
   aclrtRunMode runMode;
@@ -46,10 +46,6 @@ namespace {
   bool g_runFlag = true;
   int g_rcMode = 2;
   int g_maxBitRate = 10000;
-  int width;
-  int height;
-  uint32_t alignWidth;
-  uint32_t alignHeight;
 }
 
 Result ReadBinFile(const string& fileName, void*& data, uint32_t& size)
@@ -144,11 +140,7 @@ void callback(acldvppPicDesc* input, acldvppStreamDesc* outputStreamDesc, void* 
   else {
     ret = WriteToFile(outFileFp, outputDev, streamDescSize);
   }
-  void* data = acldvppGetPicDescData(input);
-  if (data != nullptr) {
-    acldvppFree(data);
-  }
-  acldvppDestroyPicDesc(input);
+
   if (!ret) {
     ERROR_LOG("write file failed.");
   }
@@ -160,7 +152,7 @@ Result InitResource()
   const char* aclConfigPath = "../src/acl.json";
   aclError ret = aclInit(aclConfigPath);
   if (ret != ACL_SUCCESS) {
-    ERROR_LOG("Acl init failed, res=%d", ret);
+    ERROR_LOG("Acl init failed");
     return FAILED;
   }
   INFO_LOG("Acl init success");
@@ -192,10 +184,10 @@ Result Init(int imgWidth, int imgHeight)
   InitResource();
 
   pthread_create(&threadId, nullptr, ThreadFunc, context);
-  width = imgWidth;
-  height = imgHeight;
-  alignWidth = ALIGN_UP16(width);
-  alignHeight = ALIGN_UP16(height);
+  int width = imgWidth;
+  int height = imgHeight;
+  uint32_t alignWidth = ALIGN_UP16(width);
+  uint32_t alignHeight = ALIGN_UP16(height);
   if (alignWidth == 0 || alignHeight == 0) {
     ERROR_LOG("InitCodeInputDesc AlignmentHelper failed. image w %d, h %d, align w%u, h%u",
       width, height, alignWidth, alignHeight);
@@ -228,6 +220,17 @@ Result Init(int imgWidth, int imgHeight)
   aclvencSetChannelDescRcMode(vencChannelDesc, g_rcMode);
   aclvencSetChannelDescMaxBitRate(vencChannelDesc, g_maxBitRate);
   aclvencCreateChannel(vencChannelDesc);
+
+  vpcInputDesc = acldvppCreatePicDesc();
+  if (vpcInputDesc == nullptr) {
+    ERROR_LOG("acldvppCreatePicDesc vpcInputDesc failed");
+    return FAILED;
+  }
+  acldvppSetPicDescFormat(vpcInputDesc, format);
+  acldvppSetPicDescWidth(vpcInputDesc, width);
+  acldvppSetPicDescHeight(vpcInputDesc, height);
+  acldvppSetPicDescWidthStride(vpcInputDesc, alignWidth);
+  acldvppSetPicDescHeightStride(vpcInputDesc, alignHeight);
   INFO_LOG("dvpp init resource ok");
   return SUCCESS;
 }
@@ -244,18 +247,10 @@ Result Process()
     ret = aclrtMemcpy(g_codeInputBufferDev, inBufferSize,
       g_inBufferDev, inBufferSize, ACL_MEMCPY_DEVICE_TO_DEVICE);
   }
-  vpcInputDesc = acldvppCreatePicDesc();
-  if (vpcInputDesc == nullptr) {
-    ERROR_LOG("acldvppCreatePicDesc vpcInputDesc failed");
-    return FAILED;
-  }
-  acldvppSetPicDescFormat(vpcInputDesc, format);
-  acldvppSetPicDescWidth(vpcInputDesc, width);
-  acldvppSetPicDescHeight(vpcInputDesc, height);
-  acldvppSetPicDescWidthStride(vpcInputDesc, alignWidth);
-  acldvppSetPicDescHeightStride(vpcInputDesc, alignHeight);
+
   acldvppSetPicDescData(vpcInputDesc, g_codeInputBufferDev);
   acldvppSetPicDescSize(vpcInputDesc, inBufferSize);
+
   aclvencSendFrame(vencChannelDesc, vpcInputDesc,
     static_cast<void*>(outputStreamDesc), vencFrameConfig, nullptr);
   return SUCCESS;

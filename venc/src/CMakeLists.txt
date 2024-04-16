@@ -1,12 +1,12 @@
-cmake_minimum_required(VERSION 3.11)
+cmake_minimum_required(VERSION 3.5.1)
 
 # project information
 project(venc)
 
 # Compile options
-#set(CMAKE_CXX_STANDARD 17)
-#set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options(-std=c++11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+#add_compile_options(-std=c++11)
 
 add_definitions(-DENABLE_DVPP_INTERFACE)
 
@@ -15,7 +15,7 @@ set(Euler open)
 
 # Specify target generation path
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "out")
-set(CMAKE_CXX_FLAGS_DEBUG "-fPIC -O0 -g3 -Wall")
+set(CMAKE_CXX_FLAGS_DEBUG "-fPIC -O0 -g -Wall")
 set(CMAKE_CXX_FLAGS_RELEASE "-fPIC -O2 -Wall")
 
 if(${Euler} MATCHES "open")
@@ -24,9 +24,9 @@ if(${Euler} MATCHES "open")
     set(ENV{THIRDPART_PATH} /usr/local/Ascend/thirdpart/$ENV{CPU_ARCH})
     message("Run Environment: openEuler")
 else()
-    set(ENV{INSTALL_DIR} /usr/local/Ascend/ascend-toolkit/latest)
-    set(ENV{CPU_ARCH} aarch64)
-    set(ENV{THIRDPART_PATH} /tmp/Ascend/thirdpart/$ENV{CPU_ARCH})
+    #set(ENV{INSTALL_DIR} /usr/local/Ascend/ascend-toolkit/latest)
+    #set(ENV{CPU_ARCH} aarch64)
+    #set(ENV{THIRDPART_PATH} /tmp/Ascend/thirdpart/$ENV{CPU_ARCH})
     message("Run Environment: other")
 endif()
 
@@ -64,7 +64,7 @@ include_directories(
 
 # add host lib path
 link_directories(
-    $ENV{INSTALL_DIR}/runtime/lib64/stub/
+    $ENV{INSTALL_DIR}/runtime/lib64/stub
     ${THIRDPART_PATH}/lib/
 )
 
