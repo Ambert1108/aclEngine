@@ -6,7 +6,6 @@ project(venc)
 # Compile options
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-#add_compile_options(-std=c++11)
 
 add_definitions(-DENABLE_DVPP_INTERFACE)
 
