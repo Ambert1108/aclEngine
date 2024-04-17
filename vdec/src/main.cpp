@@ -91,8 +91,10 @@ void* ThreadFunc(aclrtContext sharedContext)
   }
   INFO_LOG("process callback thread start ");
   while (g_runFlag) {
+    /* 异步任务场景下，调用本接口设置超时时间，等待aclrtLaunchCallback接口下发的回调任务执行 */
     // Notice: timeout 1000ms
     aclError aclRet = aclrtProcessReport(1000);
+    INFO_LOG("thread wait");
   }
   return nullptr;
 }
@@ -132,9 +134,8 @@ bool WriteToFile(const char* fileName, const void* dataDev, uint32_t dataSize)
 
 void callback(acldvppStreamDesc* input, acldvppPicDesc* output, void* userdata)
 {
-  /* Get the output memory decoded by VDEC, call the custom function WriteToFile to write
-   the data in the output memory to the file, and then call the acldvppFree interface to release
-   the output memory */
+  /* 获取VDEC解码后的输出内存，调用自定义函数WriteToFile进行写入将内存中的数据输
+     出到文件中，然后调用acldvppFree接口释放输出存储器 */
   void* vdecOutBufferDev = acldvppGetPicDescData(output);
   uint32_t size = acldvppGetPicDescSize(output);
   static int count = 1;
@@ -144,9 +145,10 @@ void callback(acldvppStreamDesc* input, acldvppPicDesc* output, void* userdata)
   }
   aclError ret = acldvppFree(reinterpret_cast<void*>(vdecOutBufferDev));
 
-  // Release acldvppPicDesc type data, representing output picture description data after decoding
+  // 释放acldvppPicDesc类型数据，代表解码后输出的图片描述数据
   ret = acldvppDestroyPicDesc(output);
 
+  INFO_LOG("call num=%d", count);
   count++;
 }
 
