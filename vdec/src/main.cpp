@@ -166,7 +166,7 @@ int main()
   const char* aclConfigPath = "../src/acl.json";
   aclError ret = aclInit(aclConfigPath);
 
-  INFO_LOG("vdec use deviceId={}", deviceId_);
+  INFO_LOG("vdec use deviceId=%d", deviceId_);
   /* 2.运行管理资源应用，包括Device、Context、Stream */
 
   /* 指定当前线程中用于运算的Device，同时隐式创建默认Context */
@@ -196,7 +196,7 @@ int main()
 
   /* 获取当前昇腾AI软件栈的运行模式:DEVICE or HOST */
   aclrtGetRunMode(&runMode);
-  INFO_LOG("acl runMode:{}", runMode);
+  INFO_LOG("acl runMode:%d", runMode);
 
   DIR* dir;
   if ((dir = opendir("./output")) == NULL)
@@ -290,7 +290,7 @@ int main()
     ret = aclvdecSendFrame(vdecChannelDesc_, streamInputDesc_, picOutputDesc_, nullptr, nullptr);
 
     restLen = restLen - 1;
-    INFO_LOG("remaining {} frame", restLen);
+    INFO_LOG("remaining %d frame", restLen);
   }
   ret = acldvppDestroyStreamDesc(streamInputDesc_);
   ret = aclvdecDestroyChannel(vdecChannelDesc_);
