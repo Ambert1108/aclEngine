@@ -166,6 +166,7 @@ int main()
   const char* aclConfigPath = "../src/acl.json";
   aclError ret = aclInit(aclConfigPath);
 
+  INFO_LOG("vdec use deviceId={}", deviceId_);
   /* 2.运行管理资源应用，包括Device、Context、Stream */
 
   /* 指定当前线程中用于运算的Device，同时隐式创建默认Context */
@@ -195,6 +196,7 @@ int main()
 
   /* 获取当前昇腾AI软件栈的运行模式:DEVICE or HOST */
   aclrtGetRunMode(&runMode);
+  INFO_LOG("acl runMode:{}", runMode);
 
   DIR* dir;
   if ((dir = opendir("./output")) == NULL)
@@ -276,12 +278,19 @@ int main()
     ret = acldvppSetPicDescSize(picOutputDesc_, dataSize);
     ret = acldvppSetPicDescFormat(picOutputDesc_, static_cast<acldvppPixelFormat>(format_));
 
-    /* Perform video stream decoding. After decoding each frame of data, the system automatically
-     calls callback callback function to write the decoded data to the file, and then timely release
-     relevant resources */
+
+    /**
+    * 本接口是异步接口，调用接口成功仅表示任务下发成功，不表示任务执行成功。调用该接口后，
+      需调用同步等待接口（例如，    aclrtSynchronizeStream）确保任务已执行完成
+    *发送数据前必须保证通道已经被创建，否则返回错误
+    *发送码流时须按帧发送，一次只发送完整的一帧码流
+    */
+    /* 执行视频流解码。 解码完每一帧数据后，系统自动调用callback回调函数将解码后的数据写入
+       文件，然后及时释放相关资源 */
     ret = aclvdecSendFrame(vdecChannelDesc_, streamInputDesc_, picOutputDesc_, nullptr, nullptr);
 
     restLen = restLen - 1;
+    INFO_LOG("remaining {} frame", restLen);
   }
   ret = acldvppDestroyStreamDesc(streamInputDesc_);
   ret = aclvdecDestroyChannel(vdecChannelDesc_);
