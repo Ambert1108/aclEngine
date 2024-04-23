@@ -94,7 +94,7 @@ void* ThreadFunc(aclrtContext sharedContext)
     /* 异步任务场景下，调用本接口设置超时时间，等待aclrtLaunchCallback接口下发的回调任务执行 */
     // Notice: timeout 1000ms
     aclError aclRet = aclrtProcessReport(1000);
-    INFO_LOG("thread wait");
+    //INFO_LOG("thread wait");
   }
   return nullptr;
 }

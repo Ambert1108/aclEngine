@@ -1,0 +1,43 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2019. All rights reserved.
+
+# CMake lowest version requirement
+cmake_minimum_required(VERSION 3.11)
+
+# project information
+project(decode)
+
+# Compile options
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_definitions(-DENABLE_DVPP_INTERFACE)
+
+# Specify target generation path
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "../out")
+set(CMAKE_CXX_FLAGS_DEBUG "-fPIC -O0 -g -Wall")
+set(CMAKE_CXX_FLAGS_RELEASE "-fPIC -O2 -Wall")
+
+if (NOT DEFINED ENV{INSTALL_DIR})
+    MESSAGE(FATAL_ERROR "Not Defined INSTALL_DIR")
+endif()
+
+# Header path
+include_directories(
+    $ENV{INSTALL_DIR}/runtime/include/
+)
+
+# add host lib path
+link_directories(
+    $ENV{INSTALL_DIR}/runtime/lib64/stub
+)
+
+add_executable(${PROJECT_NAME}
+        main.cpp)
+
+message("project dir: ${PROJECT_SOURCE_DIR}")
+target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+target_link_libraries(${PROJECT_NAME}
+        ascendcl acl_dvpp pthread stdc++)
+
+install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
