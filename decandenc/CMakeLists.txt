@@ -36,6 +36,7 @@ if ($ENV{CPU_ARCH} MATCHES "aarch64")
     endif()
 endif()
 
+set(CMAKE_PREFIX_PATH "/usr/local/lib64" ${CMAKE_PREFIX_PATH})
 find_package(OpenCV REQUIRED)
 message(STATUS "version: ${OpenCV_VERSION} ${BUILD_TYPE_NAME}")
 message(STATUS "opencv include:${OpenCV_INCLUDE_DIRS}")
@@ -71,7 +72,7 @@ if (${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows")
 else()
     message("2")
     target_link_libraries(${PROJECT_NAME}
-        ascendcl acl_cblas acl_dvpp stdc++ ${COMMON_DEPEND_LIB} opencv_core opencv_imgproc opencv_imgcodecs opencv_videoio pthread)
+        ascendcl acl_cblas acl_dvpp stdc++ ${COMMON_DEPEND_LIB} pthread)
 endif()
 
-install(TARGETS main DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+install(TARGETS decandenc DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
