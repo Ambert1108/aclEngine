@@ -13,7 +13,7 @@ namespace huawei {
 
   class Encoder {
   public:
-    Encoder(const VencConfig& vencConfig, int32_t devId, aclrtContext aclCtx) :
+    Encoder(VencConfig& vencConfig, int32_t devId, aclrtContext aclCtx) :
       aclLiteVideoProc(nullptr),
       config(vencConfig),
       deviceId(devId),
@@ -25,12 +25,12 @@ namespace huawei {
       close();
     }
 
-    AclLiteError open() {
+    bool open() {
       if (OpenVideoCapture() != ACLLITE_OK) {
-        return ACLLITE_ERROR;
+        return false;
       }
 
-      return ACLLITE_OK;
+      return true;
     }
 
     AclLiteError writeFrame(ImageData& data) {
@@ -54,13 +54,14 @@ namespace huawei {
 
   private:
     AclLiteError OpenVideoCapture() {
-      aclLiteVideoProc = new AclLiteVideoProc(config, context);
-      if (!aclLiteVideoProc->IsOpened()) {
-        delete aclLiteVideoProc;
-        ACLLITE_LOG_ERROR("[Encoder::OpenVideoCapture] Failed to open venc");
+      ACLLITE_LOG_INFO("[Encoder:OpenVideoCapture] width=%d, height=%d, outFile=%s, format=%d, enType=%d",
+        config.maxWidth, config.maxHeight, config.outFile.c_str(), config.format, config.enType);
+      aclLiteVideoProc = new AclLiteVideoProc(config);
+      bool res = aclLiteVideoProc->IsOpened();
+      if (!res) {
+        ACLLITE_LOG_ERROR("[Encoder::OpenVideoCapture] Failed to open venc, res={}", res);
         return ACLLITE_ERROR;
       }
-      aclLiteVideoProc->Set(VIDEO_FPS, 30);
 
       return ACLLITE_OK;
     }

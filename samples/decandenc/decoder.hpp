@@ -1,6 +1,7 @@
 #pragma once
 #include "acl/acl.h"
 #include "acllite/AclLiteUtils.h"
+#include "acllite/AclLiteUtils.h"
 #include "acllite/AclLiteError.h"
 #include "acllite/AclLiteResource.h"
 #include "acllite/AclLiteImageProc.h"
@@ -39,12 +40,16 @@ namespace huawei {
       uint32_t videoHeight_ = aclLiteVideoProc->Get(FRAME_HEIGHT);
       float fps = aclLiteVideoProc->Get(VIDEO_FPS);
 
+
       AclLiteError ret = aclLiteVideoProc->Read(data);
-      if (ret != ACLLITE_OK) {
-        ACLLITE_LOG_ERROR("[Decoder::getFrame] decoder read frame failed, errCode=%d", ret);
-        return ACLLITE_ERROR;
+      if (ret == ACLLITE_ERROR_DECODE_FINISH) {
+        ACLLITE_LOG_ERROR("[Decoder::getFrame] decoder read frame finish");
       }
-      return ACLLITE_OK;
+
+      else if (ret != ACLLITE_OK) {
+        ACLLITE_LOG_ERROR("[Decoder::getFrame] decoder read frame failed, errCode=%d", ret);
+      }
+      return ret;
     }
 
     void close() {
@@ -65,7 +70,7 @@ namespace huawei {
           ACLLITE_LOG_ERROR("[Decoder::OpenVideoCapture] The %s is inaccessible", streamName.c_str());
           return ACLLITE_ERROR;
         }
-        aclLiteVideoProc = new AclLiteVideoProc(streamName, deviceId, context);
+        aclLiteVideoProc = new AclLiteVideoProc(streamName, deviceId);
       }
       else {
         ACLLITE_LOG_ERROR("[Decoder::OpenVideoCapture] Invalid param. The arg should be accessible rtsp,"
