@@ -18,7 +18,7 @@ using namespace std;
 namespace {
   uint32_t kKeyFrameInterval = 16;
   uint32_t kRcMode = 2;
-  uint32_t kMaxBitRate = 2000;
+  uint32_t kMaxBitRate = 1000;
   uint32_t kVencQueueSize = 256;
   uint32_t kImageEnQueueRetryTimes = 3;
   uint32_t kEnqueueWait = 10000;
@@ -29,17 +29,15 @@ namespace {
 
 VencHelper::VencHelper(VencConfig& vencInfo)
   :vencInfo_(vencInfo), status_(STATUS_VENC_INIT),
-  vencProc_(nullptr), frameImageQueue_(kVencQueueSize)
+  frameImageQueue_(kVencQueueSize)
 {
 }
 
-VencHelper::~VencHelper()
-{
+VencHelper::~VencHelper() {
   DestroyResource();
 }
 
-AclLiteError VencHelper::Init()
-{
+AclLiteError VencHelper::Init() {
   if (status_ != STATUS_VENC_INIT) {
     return ACLLITE_ERROR;
   }
@@ -52,29 +50,29 @@ AclLiteError VencHelper::Init()
     }
   }
 
-  thread t{ &VencHelper::AsyncVencThreadEntry, this };
-  asyncVencTh = std::move(t);
-  //asyncVencTh.detach();
+  std::thread t = thread(VencHelper::AsyncVencThreadEntry, (void*)this);
+  t.detach();
+  //asyncVencTh = thread(VencHelper::AsyncVencThreadEntry, (void*)this);
   while (status_ == STATUS_VENC_INIT) {
     usleep(kAsyncWait);
   }
   return (status_ == STATUS_VENC_WORK) ? ACLLITE_OK : ACLLITE_ERROR_VENC_STATUS;
 }
 
-void VencHelper::AsyncVencThreadEntry() {
-  //VencHelper* thisPtr = (VencHelper*)arg;
-  DvppVenc venc(vencInfo_);
+void VencHelper::AsyncVencThreadEntry(void* arg) {
+  VencHelper* thisPtr = (VencHelper*)arg;
+  DvppVenc venc(thisPtr->vencInfo_);
 
   AclLiteError ret = venc.Init();
   if (ret != ACLLITE_OK) {
-    SetStatus(STATUS_VENC_ERROR);
+    thisPtr->SetStatus(STATUS_VENC_ERROR);
     ACLLITE_LOG_ERROR("Dvpp venc init acl resource failed, error %d", ret);
     return;
   }
 
-  SetStatus(STATUS_VENC_WORK);
-  while (GetStatus() == STATUS_VENC_WORK) {
-    shared_ptr<ImageData> image = GetEncodeImage();
+  thisPtr->SetStatus(STATUS_VENC_WORK);
+  while (thisPtr->GetStatus() == STATUS_VENC_WORK) {
+    shared_ptr<ImageData> image = thisPtr->GetEncodeImage();
     if (image == nullptr) {
       usleep(kOutqueueWait);
       continue;
@@ -82,15 +80,18 @@ void VencHelper::AsyncVencThreadEntry() {
 
     ret = venc.Process(*image.get());
     if (ret != ACLLITE_OK) {
-      SetStatus(STATUS_VENC_ERROR);
+      thisPtr->SetStatus(STATUS_VENC_ERROR);
       ACLLITE_LOG_ERROR("Dvpp venc image failed, error %d", ret);
       break;
     }
   }
 
-  venc.Finish();
-  SetStatus(STATUS_VENC_EXIT);
-  ACLLITE_LOG_INFO("VencHelper DestroyResource ---- 2 ----");
+  //delete venc;
+  //venc = nullptr;
+  ACLLITE_LOG_INFO("[Debug] VencHelper DestroyResource ---- 1 ----");
+  thisPtr->SetStatus(STATUS_VENC_EXIT);
+  ACLLITE_LOG_INFO("[Debug] AsyncVencThreadEntry is finished");
+  return;
 }
 
 AclLiteError VencHelper::Process(ImageData& image)
@@ -125,11 +126,10 @@ shared_ptr<ImageData> VencHelper::GetEncodeImage() {
 }
 
 void VencHelper::DestroyResource() {
-  if(vencProc_) vencProc_->Finish();
-  SetStatus(STATUS_VENC_FINISH);
-  ACLLITE_LOG_INFO("VencHelper DestroyResource ---- 1 ----");
-  if (asyncVencTh.joinable()) asyncVencTh.join();
-  ACLLITE_LOG_INFO("VencHelper DestroyResource ---- finish ----");
+  //this->SetStatus(STATUS_VENC_FINISH);
+  //ACLLITE_LOG_INFO("[Debug] VencHelper DestroyResource ---- 0 ----");
+  //if (asyncVencTh.joinable()) asyncVencTh.join();
+  //ACLLITE_LOG_INFO("[Debug] VencHelper DestroyResource ---- 2 ----");
 }
 
 DvppVenc::DvppVenc(VencConfig& vencInfo)
@@ -138,14 +138,11 @@ DvppVenc::DvppVenc(VencConfig& vencInfo)
 {
 }
 
-DvppVenc::~DvppVenc()
-{
+DvppVenc::~DvppVenc() {
   DestroyResource();
 }
 
-void DvppVenc::Callback(acldvppPicDesc* input,
-  acldvppStreamDesc* output, void* userData)
-{
+void DvppVenc::Callback(acldvppPicDesc* input, acldvppStreamDesc* output, void* userData) {
   void* data = acldvppGetStreamDescData(output);
   uint32_t retCode = acldvppGetStreamDescRetCode(output);
   if (retCode == 0) {
@@ -163,10 +160,7 @@ void DvppVenc::Callback(acldvppPicDesc* input,
   else {
     ACLLITE_LOG_ERROR("venc encode frame failed, ret = %u.", retCode);
   }
-  void* data_input = acldvppGetPicDescData(input);
-  if (data_input != nullptr) {
-    acldvppFree(data_input);
-  }
+
   acldvppDestroyPicDesc(input);
 }
 
@@ -207,8 +201,7 @@ AclLiteError DvppVenc::Init()
   return InitResource();
 }
 
-void* DvppVenc::SubscribleThreadFunc(aclrtContext sharedContext)
-{
+void* DvppVenc::SubscribleThreadFunc(aclrtContext sharedContext) {
   if (sharedContext == nullptr) {
     ACLLITE_LOG_ERROR("sharedContext can not be nullptr");
     return ((void*)(-1));
@@ -225,11 +218,11 @@ void* DvppVenc::SubscribleThreadFunc(aclrtContext sharedContext)
     (void)aclrtProcessReport(1000);
   }
 
+  ACLLITE_LOG_INFO("[Debug] SubscribleThreadFunc is finished");
   return (void*)0;
 }
 
-AclLiteError DvppVenc::InitResource()
-{
+AclLiteError DvppVenc::InitResource() {
   aclError aclRet = aclrtSetCurrentContext(vencInfo_.context);
   if (aclRet != ACL_SUCCESS) {
     ACLLITE_LOG_ERROR("Set context for dvpp venc failed, error %d", aclRet);
@@ -237,8 +230,7 @@ AclLiteError DvppVenc::InitResource()
   }
 
   // create process callback thread
-  AclLiteError ret = pthread_create(&threadId_, nullptr,
-    &DvppVenc::SubscribleThreadFunc, vencInfo_.context);
+  AclLiteError ret = pthread_create(&threadId_, nullptr, &DvppVenc::SubscribleThreadFunc, vencInfo_.context);
   if (ret != ACLLITE_OK) {
     ACLLITE_LOG_ERROR("Create venc subscrible thread failed, error %d", ret);
     return ACLLITE_ERROR_CREATE_THREAD;
@@ -334,8 +326,7 @@ AclLiteError DvppVenc::SetFrameConfig(uint8_t eos, uint8_t forceIFrame)
   return ACLLITE_OK;
 }
 
-AclLiteError DvppVenc::Process(ImageData& image)
-{
+AclLiteError DvppVenc::Process(ImageData& image) {
   // create picture desc
   AclLiteError ret = CreateInputPicDesc(image);
   if (ret != ACLLITE_OK) {
@@ -363,41 +354,20 @@ AclLiteError DvppVenc::CreateInputPicDesc(ImageData& image)
     ACLLITE_LOG_ERROR("Create input pic desc failed");
     return ACLLITE_ERROR_CREATE_PIC_DESC;
   }
-  void* inBufferDev_ = nullptr;
-  uint32_t inBufferSize_ = image.size;
-  auto aclRet = acldvppMalloc(&inBufferDev_, inBufferSize_);
-  if (vencInfo_.runMode != ACL_DEVICE) {
-    aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, image.data.get(), image.size, ACL_MEMCPY_HOST_TO_DEVICE);
-    if (aclRet != ACL_SUCCESS) {
-      ACLLITE_LOG_ERROR("acl memcpy data to dev failed, image.size=%u, ret=%d.\n", image.size, aclRet);
-      (void)acldvppFree(inBufferDev_);
-      inBufferDev_ = nullptr;
-      return false;
-    }
-  }
-  else {
-    // copy input to device memory
-    aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, image.data.get(), image.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
-    if (aclRet != ACL_SUCCESS) {
-      ACLLITE_LOG_ERROR("acl memcpy data to dev failed, image.size=%u, ret=%d.\n", image.size, aclRet);
-      (void)acldvppFree(inBufferDev_);
-      inBufferDev_ = nullptr;
-      return false;
-    }
-  }
+
   acldvppSetPicDescFormat(inputPicDesc_, vencInfo_.format);
   acldvppSetPicDescWidth(inputPicDesc_, image.width);
   acldvppSetPicDescHeight(inputPicDesc_, image.height);
   acldvppSetPicDescWidthStride(inputPicDesc_, ALIGN_UP16(image.width));
   acldvppSetPicDescHeightStride(inputPicDesc_, ALIGN_UP2(image.height));
-  acldvppSetPicDescData(inputPicDesc_, inBufferDev_);
+  acldvppSetPicDescData(inputPicDesc_, image.data.get());
   acldvppSetPicDescSize(inputPicDesc_, image.size);
 
   return ACLLITE_OK;
 }
 
-void DvppVenc::Finish()
-{
+void DvppVenc::Finish() {
+  ACLLITE_LOG_INFO("[Debug] finish dvpp venc");
   if (isFinished_) {
     return;
   }
@@ -416,30 +386,30 @@ void DvppVenc::Finish()
     ACLLITE_LOG_ERROR("fail to send eos frame, ret=%u", ret);
     return;
   }
-
   fclose(outFp_);
-  outFp_ = nullptr;
   isFinished_ = true;
   ACLLITE_LOG_INFO("venc process success");
 
   return;
 }
 
-void DvppVenc::DestroyResource()
-{
+void DvppVenc::DestroyResource() {
+  ACLLITE_LOG_INFO("[Debug] destory dvpp venc resource");
   Finish();
 
-  if (vencChannelDesc_ != nullptr) {
-    (void)aclvencDestroyChannel(vencChannelDesc_);
-    (void)aclvencDestroyChannelDesc(vencChannelDesc_);
-    vencChannelDesc_ = nullptr;
+  ACLLITE_LOG_INFO("[Debug] DvppVenc DestroyResource ---- 0 ----");
+  if (vencFrameConfig_ != nullptr) {
+    (void)aclvencDestroyFrameConfig(vencFrameConfig_);
+    vencFrameConfig_ = nullptr;
   }
 
+  ACLLITE_LOG_INFO("[Debug] DvppVenc DestroyResource ---- 1 ----");
   if (inputPicDesc_ != nullptr) {
     (void)acldvppDestroyPicDesc(inputPicDesc_);
     inputPicDesc_ = nullptr;
   }
 
+  ACLLITE_LOG_INFO("[Debug] DvppVenc DestroyResource ---- 2 ----");
   if (vencStream_ != nullptr) {
     aclError ret = aclrtDestroyStream(vencStream_);
     if (ret != ACL_SUCCESS) {
@@ -448,15 +418,17 @@ void DvppVenc::DestroyResource()
     vencStream_ = nullptr;
   }
 
-  if (vencFrameConfig_ != nullptr) {
-    (void)aclvencDestroyFrameConfig(vencFrameConfig_);
-    vencFrameConfig_ = nullptr;
+  ACLLITE_LOG_INFO("[Debug] DvppVenc DestroyResource ---- 3 ----");
+  if (vencChannelDesc_ != nullptr) {
+    (void)aclvencDestroyChannel(vencChannelDesc_);
+    (void)aclvencDestroyChannelDesc(vencChannelDesc_);
+    vencChannelDesc_ = nullptr;
   }
+  //g_runFlag = false;
+  //void* res = nullptr;
+  //pthread_cancel(threadId_);
+  //pthread_join(threadId_, &res);
+  //fclose(outFp_);
 
-  g_runFlag = false;
-  void* res = nullptr;
-  pthread_cancel(threadId_);
-  pthread_join(threadId_, &res);
-
-  ACLLITE_LOG_INFO("DvppVenc DestroyResource finish");
+  ACLLITE_LOG_INFO("[Debug] DvppVenc DestroyResource ---- 4 ----");
 }

@@ -150,7 +150,7 @@ void callback(acldvppPicDesc* input, acldvppStreamDesc* outputStreamDesc, void* 
 Result InitResource()
 {
   const char* aclConfigPath = "../src/acl.json";
-  aclError ret = aclInit(aclConfigPath);
+  aclError ret = aclInit(nullptr);
   if (ret != ACL_SUCCESS) {
     ERROR_LOG("Acl init failed");
     return FAILED;

@@ -16,8 +16,6 @@
 * File utils.h
 * Description: handle file operations
 */
-#ifndef ACLLITE_UTILS_H
-#define ACLLITE_UTILS_H
 #pragma once
 
 #include <iostream>
@@ -504,4 +502,3 @@ bool ReadConfig(std::map<std::string, std::string>& config,
  * @return None
  */
 void PrintConfig(const std::map<std::string, std::string> & m);
-#endif

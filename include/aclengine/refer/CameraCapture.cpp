@@ -40,7 +40,7 @@
 #include <cstring>
 #include "AclLiteUtils.h"
 extern "C" {
-#include "peripheral_api.h"
+//#include "peripheral_api.h"
 #include "CameraCapture.h"
 
 using namespace std;

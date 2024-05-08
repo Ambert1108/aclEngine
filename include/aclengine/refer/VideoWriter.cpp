@@ -60,7 +60,6 @@ VideoWriter::~VideoWriter()
 void VideoWriter::DestroyResource()
 {
     if (isReleased_) return;
-    dvppVenc_->DestroyResource();
     // release dvpp venc
     delete dvppVenc_;
     dvppVenc_ = nullptr;

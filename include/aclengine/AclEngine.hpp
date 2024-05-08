@@ -1,7 +1,6 @@
 #pragma once
 #include "acl/acl.h"
 #include "refer/AclLiteUtils.h"
-#include "refer/AclLiteUtils.h"
 #include "refer/AclLiteError.h"
 #include "refer/AclLiteResource.h"
 #include "refer/AclLiteVideoProc.h"
@@ -54,6 +53,7 @@ namespace acle {
       if (aclLiteVideoProc != nullptr) {
         //aclLiteVideoProc->Close();
         delete aclLiteVideoProc;
+        aclLiteVideoProc = nullptr;
       }
       ACLLITE_LOG_INFO("[Decoder::close] Decoder is closed");
     }
@@ -61,7 +61,7 @@ namespace acle {
   private:
     AclLiteError OpenVideoCapture() {
       if (IsRtspAddr(streamName)) {
-        aclLiteVideoProc = new AclLiteVideoProc(streamName, deviceId, context);
+        aclLiteVideoProc = new AclLiteVideoProc(streamName, deviceId);
       }
       else if (IsVideoFile(streamName)) {
         if (!IsPathExist(streamName)) {
@@ -100,22 +100,22 @@ namespace acle {
       context(aclCtx) {
       ACLLITE_LOG_INFO("[Encoder::Encoder] Encoder is create, devId=%d", devId);
     }
-
+  
     ~Encoder() {
       close();
     }
-
+  
     bool open() {
       if (OpenVideoCapture() != ACLLITE_OK) {
         return false;
       }
-
+  
       return true;
     }
-
+  
     AclLiteError writeFrame(ImageData& data) {
       uint32_t outputImageFmt = aclLiteVideoProc->Get(OUTPUT_IMAGE_FORMAT);
-
+  
       AclLiteError ret = aclLiteVideoProc->Read(data);
       if (ret != ACLLITE_OK) {
         ACLLITE_LOG_ERROR("[Encoder::writeFrame] encoder write frame failed, errCode=%d", ret);
@@ -123,15 +123,16 @@ namespace acle {
       }
       return ACLLITE_OK;
     }
-
+  
     void close() {
       if (aclLiteVideoProc != nullptr) {
         //aclLiteVideoProc->Close();
         delete aclLiteVideoProc;
+        aclLiteVideoProc = nullptr;
       }
       ACLLITE_LOG_INFO("[Encoder::close] Encoder is closed");
     }
-
+  
   private:
     AclLiteError OpenVideoCapture() {
       ACLLITE_LOG_INFO("[Encoder:OpenVideoCapture] width=%d, height=%d, outFile=%s, format=%d, enType=%d",
@@ -142,10 +143,10 @@ namespace acle {
         ACLLITE_LOG_ERROR("[Encoder::OpenVideoCapture] Failed to open venc, res={}", res);
         return ACLLITE_ERROR;
       }
-
+  
       return ACLLITE_OK;
     }
-
+  
     int32_t deviceId;
     aclrtContext context;
     VencConfig config;
@@ -155,10 +156,33 @@ namespace acle {
   class ImageHandler {
   public:
     ImageHandler() {
+      imageProc = new AclLiteImageProc();
+    }
 
+    ~ImageHandler() {
+      if (imageProc) {
+        delete imageProc;
+        imageProc = nullptr;
+      }
+    }
+
+    bool open() {
+      AclLiteError ret = imageProc->Init();
+      if (ret) {
+        ACLLITE_LOG_ERROR("[ImageHandler::open] image handler init failed, error %d", ret);
+        return false;
+      }
+
+      return true;
+    }
+
+    AclLiteError resize(ImageData& src, ImageData& dest, uint32_t width, uint32_t height) {
+      if (src.width == width || src.height == height) return ACLLITE_ERROR_DEST_INVALID;
+      imageProc->Resize(dest, src, width, height);
+      return ACLLITE_OK;
     }
 
   private:
-    AclLiteImageProc* imageProc;
+    AclLiteImageProc* imageProc = nullptr;
   };
 }

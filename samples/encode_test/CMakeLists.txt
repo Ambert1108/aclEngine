@@ -1,6 +1,6 @@
-set(SAMPLE_NAME decandenc)
+set(SAMPLE_NAME encTest)
 
-add_executable(${SAMPLE_NAME} test.cpp ${ACLE_CPP})
+add_executable(${SAMPLE_NAME} main.cpp)
 
 # Get superior directory
 #get_filename_component(INC_DIR ${PROJECT_SOURCE_DIR}/.. ABSOLUTE)

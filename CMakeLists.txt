@@ -30,6 +30,7 @@ message("cpu arch:$ENV{CPU_ARCH}")
 
 add_definitions(-DENABLE_DVPP_INTERFACE)
 list(APPEND COMMON_DEPEND_LIB acllite avcodec avformat avdevice avutil swresample avfilter swscale)
+#list(APPEND COMMON_DEPEND_LIB avcodec avformat avdevice avutil swresample avfilter swscale)
 if ($ENV{CPU_ARCH} MATCHES "aarch64")
     if(EXISTS "$ENV{INSTALL_DIR}/driver/libmedia_mini.so")
         list(APPEND COMMON_DEPEND_LIB media_mini slog ascend_hal c_sec mmpa)
@@ -49,6 +50,7 @@ include_directories(
     ../inc/
     $ENV{INSTALL_DIR}/runtime/include/
 	$ENV{THIRDPART_PATH}/include/
+    ${PROJECT_SOURCE_DIR}/include/
     $ENV{THIRDPART_PATH}/include/acllite
 )
 
@@ -59,4 +61,29 @@ link_directories(
     $ENV{INSTALL_DIR}/driver
 )
 
+set(ACLE_DIR "${PROJECT_SOURCE_DIR}/include/aclengine/refer")
+#aux_source_directory(ACLE_DIR ACLE_CPP)
+set(ACLE_CPP 
+    ${ACLE_DIR}/AclLiteApp.cpp 
+    ${ACLE_DIR}/AclLiteResource.cpp 
+    ${ACLE_DIR}/AclLiteVideoProc.cpp
+    #${ACLE_DIR}/CameraCapture.cpp 
+    ${ACLE_DIR}/VideoCapture.cpp 
+    ${ACLE_DIR}/VdecHelper.cpp 
+    ${ACLE_DIR}/AclLiteThread.cpp 
+    ${ACLE_DIR}/AclLiteThreadMgr.cpp 
+    ${ACLE_DIR}/VideoWriter.cpp
+    ${ACLE_DIR}/VencHelper.cpp 
+    ${ACLE_DIR}/AclLiteImageProc.cpp 
+    ${ACLE_DIR}/ResizeHelper.cpp 
+    ${ACLE_DIR}/JpegDHelper.cpp 
+    ${ACLE_DIR}/JpegEHelper.cpp 
+    ${ACLE_DIR}/PngDHelper.cpp 
+    ${ACLE_DIR}/CropAndPasteHelper.cpp 
+    ${ACLE_DIR}/AclLiteUtils.cpp 
+    #${ACLE_DIR}/AclLiteModel.cpp 
+    )
+
 add_subdirectory(samples/decandenc)
+add_subdirectory(samples/encode_test)
+add_subdirectory(samples/venc/src)

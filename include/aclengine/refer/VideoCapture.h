@@ -30,11 +30,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  * ============================================================================
  */
-
-#ifndef VIDEO_DECODE_H
-#define VIDEO_DECODE_H
-#ifndef VIDEO_FRAME_DECODE_H
-#define VIDEO_FRAME_DECODE_H
+#pragma once
 
 #include <dirent.h>
 #include <stdint.h>
@@ -269,6 +265,3 @@ private:
     ThreadSafeQueue<std::shared_ptr<ImageData>> frameImageQueue_;
     int videoChannelMax_;
 };
-
-#endif /* VIDEO_FRAME_DECODE_H_ */
-#endif /* VIDEO_DECODE_H_ */

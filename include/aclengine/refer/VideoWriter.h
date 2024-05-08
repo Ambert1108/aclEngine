@@ -30,9 +30,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  * ============================================================================
  */
-
-#ifndef VIDEO_ENCODE_H
-#define VIDEO_ENCODE_H
+#pragma once
 
 #include <dirent.h>
 #include <stdint.h>
@@ -80,4 +78,3 @@ private:
     VencConfig vencInfo_;
 };
 
-#endif

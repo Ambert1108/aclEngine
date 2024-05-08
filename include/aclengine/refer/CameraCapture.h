@@ -30,8 +30,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  * ============================================================================
  */
-#ifndef CAMERA_CAPTURE_H
-#define CAMERA_CAPTURE_H
 #pragma once
 
 #include "AclLiteUtils.h"
@@ -70,4 +68,3 @@ private:
     uint32_t size_;
     uint32_t fps_;
 };
-#endif

@@ -16,8 +16,6 @@
 * File utils.h
 * Description: handle file operations
 */
-#ifndef ACLLITE_VIDEO_CAP_BASE_H
-#define ACLLITE_VIDEO_CAP_BASE_H
 #pragma once
 
 #include "AclLiteError.h"
@@ -52,4 +50,3 @@ public:
     virtual AclLiteError Close() = 0;
     virtual AclLiteError Open() = 0;
 };
-#endif

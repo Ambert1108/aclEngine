@@ -315,18 +315,19 @@ VideoCapture::VideoCapture(const std::string& videoName, int32_t deviceId, aclrt
     }
 }
 
-VideoCapture::~VideoCapture()
-{
-    DestroyResource();
+VideoCapture::~VideoCapture() {
+  DestroyResource();
 }
 
 void VideoCapture::DestroyResource()
 {
     if (isReleased_) return;
+    ACLLITE_LOG_INFO("[Debug] VideoCapture DestroyResource ---- 0 ----");
     // 1. stop ffmpeg
     isStop_ = true;
 
     if (decodeThread_.joinable()) decodeThread_.join();
+    ACLLITE_LOG_INFO("[Debug] VideoCapture DestroyResource ---- 1 ----");
 
     // 2. delete ffmpeg decoder
     if(ffmpegDecoder_ != nullptr) {
@@ -337,6 +338,7 @@ void VideoCapture::DestroyResource()
         delete ffmpegDecoder_;
         ffmpegDecoder_ = nullptr;
     }
+    ACLLITE_LOG_INFO("[Debug] VideoCapture DestroyResource ---- 2 ----");
  
     // 3. release dvpp vdec
     if(dvppVdec_ != nullptr) {
@@ -346,6 +348,8 @@ void VideoCapture::DestroyResource()
         delete dvppVdec_;
         dvppVdec_ = nullptr;
     }
+    ACLLITE_LOG_INFO("[Debug] VideoCapture DestroyResource ---- 3 ----");
+
     // 4. release image memory in decode output queue
     do {
         shared_ptr<ImageData> frame = FrameImageOutQueue(true);
@@ -358,8 +362,11 @@ void VideoCapture::DestroyResource()
             frame->data = nullptr;
         }
     } while (1);
+    ACLLITE_LOG_INFO("[Debug] VideoCapture DestroyResource ---- 4 ----");
+
     // 5. release channel id
     channelIdGenerator[deviceId_].ReleaseChannelId(channelId_);
+    ACLLITE_LOG_INFO("[Debug] VideoCapture DestroyResource ---- 5 ----");
 
     isReleased_ = true;
 }
@@ -633,6 +640,7 @@ void VideoCapture::FrameDecodeThreadFunction(void* decoderSelf)
         usleep(kWaitDecodeFinishInterval);
     }
     thisPtr->SetEnd();
+    ACLLITE_LOG_INFO("[Debug] FrameDecodeThreadFunction is finished");
 }
 
 // callback of ffmpeg decode frame
@@ -857,6 +865,7 @@ AclLiteError VideoCapture::SetAclContext()
 
 AclLiteError VideoCapture::Close()
 {
-    DestroyResource();
-    return ACLLITE_OK;
+  ACLLITE_LOG_INFO("[Debug] close video capture");
+  DestroyResource();
+  return ACLLITE_OK;
 }

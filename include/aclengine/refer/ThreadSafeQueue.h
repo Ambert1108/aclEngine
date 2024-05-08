@@ -30,9 +30,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  * ============================================================================
  */
-
-#ifndef THREAD_SAFE_QUEUE_H
-#define THREAD_SAFE_QUEUE_H
+#pragma once
 
 #include <mutex>
 #include <queue>
@@ -136,5 +134,3 @@ private:
     const uint32_t kMaxQueueCapacity = 10000; // the maximum queue capacity
     const uint32_t kDefaultQueueCapacity = 10; // default queue capacity
 };
-
-#endif /* THREAD_SAFE_QUEUE_H */

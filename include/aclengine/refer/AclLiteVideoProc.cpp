@@ -38,108 +38,99 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+
 #include "AclLiteUtils.h"
 #include "AclLiteVideoProc.h"
 #include "VideoCapture.h"
 #include "VideoWriter.h"
-#ifdef ENABLE_BOARD_CAMARE
-#include "CameraCapture.h"
-#endif
 
 using namespace std;
 
-AclLiteVideoProc::AclLiteVideoProc():cap_(nullptr)
-{
-#ifdef ENABLE_BOARD_CAMARE
-    int capWidth = 1280;
-    int capHeight = 720;
-    int capFps = 15;
-    cap_ = new CameraCapture(capWidth, capHeight, capFps);
-    Open();
-#endif
+//AclLiteVideoProc::AclLiteVideoProc():cap_(nullptr) {
+//#ifdef ENABLE_BOARD_CAMARE
+//  int capWidth = 1280;
+//  int capHeight = 720;
+//  int capFps = 15;
+//  cap_ = new CameraCapture(capWidth, capHeight, capFps);
+//  Open();
+//#endif
+//}
+
+//AclLiteVideoProc::AclLiteVideoProc(uint32_t cameraId, uint32_t width, uint32_t height, uint32_t fps)
+//  : cap_(nullptr) {
+//#ifdef ENABLE_BOARD_CAMARE
+//  cap_ = new CameraCapture(cameraId, width, height, fps);
+//  Open();
+//#endif
+//}
+
+AclLiteVideoProc::AclLiteVideoProc(const string& videoPath, int32_t deviceId, aclrtContext context) {
+  ACLLITE_LOG_INFO("[Debug] create decode video proc");
+  videoProcName = "VideoCapture";
+  cap_ = new VideoCapture(videoPath, deviceId, context);
+  Open();
 }
 
-AclLiteVideoProc::AclLiteVideoProc(uint32_t cameraId, uint32_t width,
-                                   uint32_t height, uint32_t fps):cap_(nullptr)
-{
-#ifdef ENABLE_BOARD_CAMARE
-    cap_ = new CameraCapture(cameraId, width, height, fps);
-    Open();
-#endif
+AclLiteVideoProc::AclLiteVideoProc(VencConfig& vencConfig, aclrtContext context) {
+  ACLLITE_LOG_INFO("[Debug] create encode video proc");
+  videoProcName = "VideoWriter";
+  cap_ = new VideoWriter(vencConfig, context);
+  Open();
 }
 
-AclLiteVideoProc::AclLiteVideoProc(const string& videoPath, int32_t deviceId, aclrtContext context)
-{
-  ACLLITE_LOG_INFO("[Debug] create decoder video proc");
-    cap_ = new VideoCapture(videoPath, deviceId, context);
-    Open();
+AclLiteVideoProc::~AclLiteVideoProc() {
+  if (cap_ != nullptr) {
+    AclLiteError ret = Close();
+    ACLLITE_LOG_INFO("[Debug] destruct acl lite video proc %s, ret=%d", videoProcName.c_str(), ret);
+    delete cap_;
+    cap_ = nullptr;
+  }
 }
 
-AclLiteVideoProc::AclLiteVideoProc(VencConfig& vencConfig, aclrtContext context)
-{
-    cap_ = new VideoWriter(vencConfig, context);
-    Open();
+bool AclLiteVideoProc::IsOpened() {
+  if (cap_ != nullptr) {
+      return cap_->IsOpened();
+  } else {
+      return false;
+  }
 }
 
-AclLiteVideoProc::~AclLiteVideoProc()
-{
-    if (cap_ != nullptr) {
-        Close();
-        delete cap_;
-        cap_ = nullptr;
-    }
+AclLiteError AclLiteVideoProc::Set(StreamProperty key, uint32_t value) {
+  if (cap_ != nullptr) {
+      return cap_->Set(key, value);
+  } else {
+      return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
+  }
 }
 
-bool AclLiteVideoProc::IsOpened()
-{
-    if (cap_ != nullptr) {
-        return cap_->IsOpened();
-    } else {
-        return false;
-    }
+uint32_t AclLiteVideoProc::Get(StreamProperty key) {
+  if (cap_ != nullptr) {
+      return cap_->Get(key);
+  } else {
+      return 0;
+  }
 }
 
-AclLiteError AclLiteVideoProc::Set(StreamProperty key, uint32_t value)
-{
-    if (cap_ != nullptr) {
-        return cap_->Set(key, value);
-    } else {
-        return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
-    }
+AclLiteError AclLiteVideoProc::Read(ImageData& frame) {
+  if (cap_ != nullptr) {
+    return cap_->Read(frame);
+  } else {
+    return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
+  }
 }
 
-uint32_t AclLiteVideoProc::Get(StreamProperty key)
-{
-    if (cap_ != nullptr) {
-        return cap_->Get(key);
-    } else {
-        return 0;
-    }
+AclLiteError AclLiteVideoProc::Close() {
+  if (cap_ != nullptr) {
+    return cap_->Close();
+  } else {
+    return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
+  }
 }
 
-AclLiteError AclLiteVideoProc::Read(ImageData& frame)
-{
-    if (cap_ != nullptr) {
-        return cap_->Read(frame);
-    } else {
-        return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
-    }
-}
-
-AclLiteError AclLiteVideoProc::Close()
-{
-    if (cap_ != nullptr) {
-        return cap_->Close();
-    } else {
-        return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
-    }
-}
-
-AclLiteError AclLiteVideoProc::Open()
-{
-    if (cap_ != nullptr) {
-        return cap_->Open();
-    } else {
-        return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
-    }
+AclLiteError AclLiteVideoProc::Open() {
+  if (cap_ != nullptr) {
+    return cap_->Open();
+  } else {
+    return ACLLITE_ERROR_UNSURPPORT_VIDEO_CAPTURE;
+  }
 }

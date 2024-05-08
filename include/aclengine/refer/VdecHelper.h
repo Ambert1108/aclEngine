@@ -7,8 +7,7 @@
 * but WITHOUT ANY WARRANTY; without even the implied warranty of
 * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 */
-#ifndef VDEC_PROCESS_H
-#define VDEC_PROCESS_H
+#pragma once
 
 #include <cstdint>
 #include <iostream>
@@ -77,5 +76,3 @@ private:
     bool isExit_;
     bool isReleased_;
 };
-
-#endif
