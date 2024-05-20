@@ -1,5 +1,7 @@
 #pragma once
 #include "acl/acl.h"
+#include "core/Types.h"
+#include "core/SafeQueue.hpp"
 #include "refer/AclLiteUtils.h"
 #include "refer/AclLiteError.h"
 #include "refer/AclLiteResource.h"
@@ -7,7 +9,12 @@
 #include "refer/AclLiteImageProc.h"
 #include "refer/AclLiteVideoCapBase.h"
 
+#include "seeker/common.h"
+#include "seeker/logger.h"
+#include "seeker/loggerApi.h"
+
 #include <string>
+#include <atomic>
 
 namespace acle {
   class Decoder {
@@ -151,6 +158,282 @@ namespace acle {
     aclrtContext context;
     VencConfig config;
     AclLiteVideoProc* aclLiteVideoProc;
+  };
+
+  class EncoderOwn {
+  public:
+    EncoderOwn(CodecFormat& fmt) :
+      encodeCtx(fmt) { };
+
+    ~EncoderOwn() {
+      close();
+    }
+
+    bool open() { return initResource; }
+
+    void close() {
+      AclLiteError ret = setFrameConfig(0, 1);
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] Set frame config failed, error={}", ret);
+        return;
+      }
+
+      ret = aclvencSendFrame(vencChannelDesc_, nullptr,
+        nullptr, vencFrameConfig_, nullptr);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] fail to send eos frame, ret={}", ret);
+        return;
+      }
+
+      isWork.store(false);
+
+      if (!vencFrameConfig_) {
+        (void)aclvencDestroyFrameConfig(vencFrameConfig_);
+        vencFrameConfig_ = nullptr;
+      }
+
+      if (!inputPicDesc_) {
+        void* data = acldvppGetPicDescData(inputPicDesc_);
+        if (!data) {
+          acldvppFree(data);
+        }
+        acldvppDestroyPicDesc(inputPicDesc_);
+      }
+
+      if (vencStream_ != nullptr) {
+        aclError ret = aclrtDestroyStream(vencStream_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("[AclEngine::Encoder::Error] destroy stream failed, error={}", ret);
+        }
+        vencStream_ = nullptr;
+      }
+
+      if (vencChannelDesc_ != nullptr) {
+        aclError aclRet = aclvencDestroyChannel(vencChannelDesc_);
+        if (aclRet != ACL_SUCCESS) {
+          E_LOG("[AclEngine::Encoder::Error] aclvencDestroyChannel failed, aclRet={}", aclRet);
+        }
+        (void)aclvencDestroyChannelDesc(vencChannelDesc_);
+        vencChannelDesc_ = nullptr;
+      }
+      void* res = nullptr;
+      pthread_cancel(threadId_);
+      pthread_join(threadId_, &res);
+
+      I_LOG("[Encoder] Encoder is closed");
+    }
+
+    bool process(const AclFrame& input, AclPacket& output) {
+      AclLiteError ret = createInputPicDesc(input);
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] fail to create picture description");
+        return false;
+      }
+
+      acldvppStreamDesc* outputStreamDesc = nullptr;
+
+      ret = aclvencSendFrame(vencChannelDesc_, inputPicDesc_,
+        static_cast<void*>(outputStreamDesc), vencFrameConfig_, (void*)this);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] encode frame failed, errorCode={}", ret);
+        return false;
+      }
+
+      if (pakcetQueue.Empty()) {
+        W_LOG("[AclEngine::Encoder::Warn] get packet failed, wait encode process");
+        return false;
+      }
+      output = pakcetQueue.Pop();
+      return true;
+    }
+
+  private:
+    static void callback(acldvppPicDesc* input,
+      acldvppStreamDesc* output, void* user) {
+      uint32_t retCode = acldvppGetStreamDescRetCode(output);
+      if (retCode != 0) {
+        E_LOG("[AclEngine::Encoder::Error] get encode out data failed");
+      }
+      else {
+        AclPacket pkt(output);
+        EncoderOwn* own = (EncoderOwn*)user;
+        own->pakcetQueue.Push(pkt);
+      }
+      void* data = acldvppGetPicDescData(input);
+      if (!data) {
+        acldvppFree(data);
+      }
+      acldvppDestroyPicDesc(input);
+    }
+
+    static void* notifyCallbackFunc(void* args) {
+      EncoderOwn* own = (EncoderOwn*)args;
+      if (!own->encodeCtx.context) {
+        E_LOG("[AclEngine::Encoder::Error] notify use context can not be nullptr!");
+        return nullptr;
+      }
+
+      aclError ret = aclrtSetCurrentContext(own->encodeCtx.context);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] set context failed, errorCode={}", static_cast<int32_t>(ret));
+        return nullptr;
+      }
+
+      while (own->isWork.load()) {
+        (void)aclrtProcessReport(1);
+      }
+
+      I_LOG("[AclEngine::Encoder] notify callback func close");
+      return nullptr;
+    }
+
+    AclLiteError createVencChannel() {
+      vencChannelDesc_ = aclvencCreateChannelDesc();
+      if (vencChannelDesc_ == nullptr) {
+        ACLLITE_LOG_ERROR("Create venc channel desc failed");
+        return ACLLITE_ERROR_CREATE_VENC_CHAN_DESC;
+      }
+
+      aclvencSetChannelDescThreadId(vencChannelDesc_, threadId_);
+      aclvencSetChannelDescCallback(vencChannelDesc_, callback);
+      aclvencSetChannelDescEnType(vencChannelDesc_, encodeCtx.enType);
+      aclvencSetChannelDescPicFormat(vencChannelDesc_, encodeCtx.format);
+      aclvencSetChannelDescPicWidth(vencChannelDesc_, encodeCtx.width);
+      aclvencSetChannelDescPicHeight(vencChannelDesc_, encodeCtx.height);
+      aclvencSetChannelDescKeyFrameInterval(vencChannelDesc_, encodeCtx.gopSize);
+      aclvencSetChannelDescRcMode(vencChannelDesc_, encodeCtx.rcMode);
+      aclvencSetChannelDescMaxBitRate(vencChannelDesc_, encodeCtx.maxBitrate);
+
+      aclError ret = aclvencCreateChannel(vencChannelDesc_);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("fail to create venc channel");
+        return ACLLITE_ERROR_CREATE_VENC_CHAN;
+      }
+
+      return ACLLITE_OK;
+    }
+
+    AclLiteError createFrameConfig() {
+      vencFrameConfig_ = aclvencCreateFrameConfig();
+      if (vencFrameConfig_ == nullptr) {
+        E_LOG("[AclEngine::Encoder::Error] Create frame config failed");
+        return ACLLITE_ERROR_VENC_CREATE_FRAME_CONFIG;
+      }
+
+      AclLiteError ret = setFrameConfig(0, 1);
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] Set frame config failed, error={}", ret);
+        return ret;
+      }
+
+      return ACLLITE_OK;
+    }
+
+    AclLiteError createInputPicDesc(const AclFrame& image) {
+      inputPicDesc_ = acldvppCreatePicDesc();
+      if (inputPicDesc_ == nullptr) {
+        E_LOG("[AclEngine::Encoder::Error] Create input pic desc failed");
+        return ACLLITE_ERROR_CREATE_PIC_DESC;
+      }
+      void* inBufferDev_ = nullptr;
+      uint32_t inBufferSize_ = image.size;
+      auto aclRet = acldvppMalloc(&inBufferDev_, inBufferSize_);
+      if (encodeCtx.runMode != ACL_DEVICE) {
+        aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, image.data.get(), image.size, ACL_MEMCPY_HOST_TO_DEVICE);
+        if (aclRet != ACL_SUCCESS) {
+          E_LOG("[AclEngine::Encoder::Error] acl memcpy data to dev failed, image.size={}, ret={}", image.size, aclRet);
+          (void)acldvppFree(inBufferDev_);
+          inBufferDev_ = nullptr;
+          return false;
+        }
+      }
+      else {
+        aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, image.data.get(), image.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
+        if (aclRet != ACL_SUCCESS) {
+          ACLLITE_LOG_ERROR("[AclEngine::Encoder::Error] acl memcpy data to dev failed, image.size={}, ret={}", image.size, aclRet);
+          (void)acldvppFree(inBufferDev_);
+          inBufferDev_ = nullptr;
+          return false;
+        }
+      }
+      acldvppSetPicDescFormat(inputPicDesc_, encodeCtx.format);
+      acldvppSetPicDescWidth(inputPicDesc_, image.width);
+      acldvppSetPicDescHeight(inputPicDesc_, image.height);
+      acldvppSetPicDescWidthStride(inputPicDesc_, ALIGN_UP16(image.width));
+      acldvppSetPicDescHeightStride(inputPicDesc_, ALIGN_UP2(image.height));
+      acldvppSetPicDescData(inputPicDesc_, inBufferDev_);
+      acldvppSetPicDescSize(inputPicDesc_, image.size);
+
+      return ACLLITE_OK;
+    }
+
+    AclLiteError setFrameConfig(uint8_t eos, uint8_t forceIFrame) {
+      aclError ret = aclvencSetFrameConfigEos(vencFrameConfig_, eos);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] fail to set eos, ret={}", ret);
+        return ACLLITE_ERROR_VENC_SET_EOS;
+      }
+
+      ret = aclvencSetFrameConfigForceIFrame(vencFrameConfig_, forceIFrame);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] fail to set venc ForceIFrame");
+        return ACLLITE_ERROR_VENC_SET_IF_FRAME;
+      }
+    }
+
+    bool initResource() {
+      aclError aclRet = aclrtSetCurrentContext(encodeCtx.context);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] Set context for dvpp venc failed, errorCode={}", aclRet);
+        return ACLLITE_ERROR_SET_ACL_CONTEXT;
+      }
+
+      AclLiteError ret = pthread_create(&threadId_, nullptr,
+        notifyCallbackFunc, (void*)this);
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] Create notify callback thread failed, errorCode={}", ret);
+        return ACLLITE_ERROR_CREATE_THREAD;
+      }
+
+      ret = createFrameConfig();
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] Create venc frame config failed, errorCode={}", ret);
+        return ret;
+      }
+
+      ret = createVencChannel();
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] Create venc channel failed, errorCode={}", ret);
+        return ret;
+      }
+
+      //暂时不确定是否需要调用这两个函数
+      aclRet = aclrtCreateStream(&vencStream_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] Create enc stream failed, errorCode={}", aclRet);
+        return ACLLITE_ERROR_CREATE_STREAM;
+      }
+
+      aclRet = aclrtSubscribeReport(threadId_, vencStream_);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[AclEngine::Encoder::Error] Venc ubscrible report failed, error={}", 
+          aclRet);
+        return ACLLITE_ERROR_SUBSCRIBE_REPORT;
+      }
+
+
+      I_LOG("[AclEngine::Encoder] Init resource success");
+      return ACLLITE_OK;
+    }
+
+    CodecFormat encodeCtx;
+    pthread_t threadId_;
+    aclvencChannelDesc* vencChannelDesc_ = nullptr;
+    aclvencFrameConfig* vencFrameConfig_ = nullptr;
+    acldvppPicDesc* inputPicDesc_ = nullptr;
+    aclrtStream vencStream_;
+    SafeQueue<AclPacket> pakcetQueue{};
+    std::atomic<bool> isWork{ true };
   };
 
   class ImageHandler {
