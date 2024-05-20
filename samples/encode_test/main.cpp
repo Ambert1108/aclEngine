@@ -1,10 +1,10 @@
 #include "acl/acl.h"
-#include "acllite/AclLiteUtils.h"
-#include "acllite/AclLiteError.h"
-#include "acllite/AclLiteResource.h"
-#include "acllite/AclLiteVideoProc.h"
-#include "acllite/AclLiteImageProc.h"
-#include "acllite/AclLiteVideoCapBase.h"
+#include "aclengine/refer/AclLiteUtils.h"
+#include "aclengine/refer/AclLiteError.h"
+#include "aclengine/refer/AclLiteResource.h"
+#include "aclengine/refer/AclLiteVideoProc.h"
+#include "aclengine/refer/AclLiteImageProc.h"
+#include "aclengine/refer/AclLiteVideoCapBase.h"
 
 #include <iostream>
 #include <string>
@@ -23,9 +23,9 @@ void test1() {
     ACLLITE_LOG_ERROR("[Decoder::IsOpened] Failed to open vdec");
     return;
   }
-
+  
   AclLiteVideoProc* encoder = nullptr;
-
+  
   bool run = true;
   while (run) {
     ImageData frame;
@@ -33,7 +33,7 @@ void test1() {
     if (ret != ACLLITE_OK) {
       break;
     }
-
+  
     if (!encoder) {
       VencConfig vencInfo;
       vencInfo.maxWidth = frame.width;
@@ -48,20 +48,20 @@ void test1() {
         return;
       }
     }
-
+  
     ret = encoder->Read(frame);
     if (ret != ACLLITE_OK) {
       break;
     }
   }
-
-
+  
+  
   if (decoder != nullptr) {
     decoder->Close();
     delete decoder;
   }
   ACLLITE_LOG_INFO("[Decoder::close] Decoder is closed");
-
+  
   if (encoder != nullptr) {
     encoder->Close();
     delete encoder;
@@ -74,7 +74,7 @@ void test2() {
   ACLLITE_LOG_INFO("run test 2");
   AclLiteResource aclDev(deviceId, "");
   aclDev.Init();
-
+  
   AclLiteVideoProc* encoder = nullptr;
   VencConfig vencInfo;
   vencInfo.maxWidth = 1280;
@@ -88,7 +88,7 @@ void test2() {
     ACLLITE_LOG_ERROR("Failed to open encoder");
     return;
   }
-
+  
   if (encoder != nullptr) {
     encoder->Close();
     delete encoder;

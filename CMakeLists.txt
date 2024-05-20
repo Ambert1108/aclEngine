@@ -4,9 +4,17 @@ cmake_minimum_required(VERSION 3.11)
 project(simpleAscend)
 
 # Compile options
-add_compile_options(-std=c++11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "-D__STDC_CONSTANT_MACROS")
 
-add_definitions(-DENABLE_DVPP_INTERFACE)
+if (MSVC)
+    add_compile_options("/utf-8")
+	add_compile_options("/EHsc")  # deal with MSVC Warning C4530
+	add_compile_options("/Od")
+    add_compile_options(/w44251 /w44275)
+endif (MSVC)
+find_package(Threads REQUIRED)
 
 # Specify target generation path
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "../out")
@@ -29,8 +37,8 @@ endif()
 message("cpu arch:$ENV{CPU_ARCH}")
 
 add_definitions(-DENABLE_DVPP_INTERFACE)
-list(APPEND COMMON_DEPEND_LIB acllite avcodec avformat avdevice avutil swresample avfilter swscale)
-#list(APPEND COMMON_DEPEND_LIB avcodec avformat avdevice avutil swresample avfilter swscale)
+#list(APPEND COMMON_DEPEND_LIB acllite avcodec avformat avdevice avutil swresample avfilter swscale)
+list(APPEND COMMON_DEPEND_LIB avcodec avformat avdevice avutil swresample avfilter swscale)
 if ($ENV{CPU_ARCH} MATCHES "aarch64")
     if(EXISTS "$ENV{INSTALL_DIR}/driver/libmedia_mini.so")
         list(APPEND COMMON_DEPEND_LIB media_mini slog ascend_hal c_sec mmpa)
@@ -85,5 +93,5 @@ set(ACLE_CPP
     )
 
 add_subdirectory(samples/decandenc)
-add_subdirectory(samples/encode_test)
+#add_subdirectory(samples/encode_test)
 add_subdirectory(samples/venc/src)

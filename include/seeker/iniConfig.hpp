@@ -17,7 +17,7 @@ https://github.com/jtilly/inih
 #pragma GCC diagnostic ignored "-Wstringop-truncation"
 #endif
 
-#include "INIReader.h"
+#include "util/INIReader.h"
 
 #ifdef __GNUC__
 #pragma GCC diagnostic pop

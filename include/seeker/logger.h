@@ -6,10 +6,10 @@
 */
 #pragma once
 #pragma warning(push, 0)
-#include "../spdlog/spdlog.h"
-#include "../spdlog/sinks/stdout_color_sinks.h"
-#include "../spdlog/sinks/daily_file_sink.h"
-#include "../spdlog/async.h"
+#include "spdlog/spdlog.h"
+#include "spdlog/sinks/stdout_color_sinks.h"
+#include "spdlog/sinks/daily_file_sink.h"
+#include "spdlog/async.h"
 #pragma warning(pop)
 
 #include <iostream>
