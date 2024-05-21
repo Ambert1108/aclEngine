@@ -173,6 +173,7 @@ Result InitResource()
 
   // Gets whether the current application is running on host or Device
   ret = aclrtGetRunMode(&runMode);
+  INFO_LOG("runMode=%d", runMode);
   if (ret != ACL_SUCCESS) {
     ERROR_LOG("acl get run mode failed");
     return FAILED;

@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
-  EncoderOwn* encoder = nullptr;
+  Encoder* encoder = nullptr;
   
   ImageHandler imager;
   imager.open();
@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
       aclrtGetCurrentContext(&fmt.context);
       I_LOG("[Encoder:Init] width={}, height={}, format={}, enType={}",
         fmt.width, fmt.height, fmt.format, fmt.enType);
-      encoder = new EncoderOwn(fmt);
+      encoder = new Encoder(fmt);
       if (!encoder->open()) {
         E_LOG("[Encoder::OpenVideoCapture] Failed to open venc");
         break;
@@ -145,7 +145,6 @@ int main(int argc, char* argv[]) {
   }
   
   if (encoder != nullptr) {
-    encoder->close();
     delete encoder;
   }
 
