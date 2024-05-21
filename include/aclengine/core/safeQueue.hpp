@@ -61,7 +61,8 @@ public:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (queue_.empty()) { // check the queue is empty
-      return nullptr;
+      T tmp;
+      return tmp;
     }
 
     T tmp_ptr = queue_.front();

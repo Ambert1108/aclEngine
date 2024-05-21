@@ -75,6 +75,7 @@ AclLiteError AclLiteResource::Init()
     if (ret != ACL_SUCCESS) {
         ACLLITE_LOG_WARNING("acl get run mode failed, errorCode is : %d", ret);
     }
+    ACLLITE_LOG_INFO("runMode=%d", runMode_);
 
     return ACLLITE_OK;
 }

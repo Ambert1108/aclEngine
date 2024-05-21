@@ -48,6 +48,7 @@ namespace acle {
     acldvppStreamFormat enType = H264_MAIN_LEVEL;
     aclrtContext context = nullptr;
     aclrtRunMode runMode = ACL_HOST;
+    std::string outFile;
   };
 
   struct AclFrame {
@@ -61,28 +62,17 @@ namespace acle {
   };
 
   struct AclPacket {
-    void* data;
+    uint8_t* data;
     uint32_t size;
     uint64_t timestamp;
 
     /* 1:true, 0:false */
     uint8_t eos;
 
-    acldvppStreamDesc* streamDesc;
-
-    AclPacket(acldvppStreamDesc* input) 
-      : streamDesc(input), 
-        data(acldvppGetStreamDescData(input)),
-      size(acldvppGetStreamDescSize(input)),
-      timestamp(acldvppGetStreamDescTimestamp(input)),
-      eos(acldvppGetStreamDescEos(input)) {};
+    AclPacket() = default;
 
     ~AclPacket() {
-      data = nullptr;
-      if (streamDesc) {
-        (void)acldvppDestroyStreamDesc(streamDesc);
-        streamDesc = nullptr;
-      }
+      //if(data) delete[] ((uint8_t*)data);
     };
   };
 }

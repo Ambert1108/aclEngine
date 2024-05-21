@@ -671,6 +671,18 @@ namespace VideoEngine23 {
       }
       return 0;
     }
+
+    int mux(const uint8_t* rawData, const int& rawSize, std::queue<std::vector<uint8_t>>& inData) {
+      if (rawData != nullptr && rawSize) {
+        H264ToRtp(rawData, rawSize, inData);
+      }
+      else {
+        E_LOG("ERROR: encode pkt is nullptr.");
+        return -1;
+      }
+      return 0;
+    }
+
   private:
     void H264ToRtp(const AVPacket* input_pkt, std::queue<std::vector<uint8_t>>& outData) {
       uint64_t frameCount = 0;
@@ -789,6 +801,125 @@ namespace VideoEngine23 {
         outNalu.pop();
       }
     }
+
+    void H264ToRtp(const uint8_t* rawData, const int& rawSize, std::queue<std::vector<uint8_t>>& outData) {
+      uint64_t frameCount = 0;
+      auto data = rawData;
+      auto pktSize = rawSize;
+      std::queue<std::vector<uint8_t>> outNalu;
+      int sp = -1;
+      int ep = -1;
+      int i = 0;
+      for (i = 0; i < pktSize; i++) {
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
+          ep = i - 1;
+          if (ep != -1) {
+            int nalu_len = ep - sp + 1;
+            std::vector<uint8_t> d;
+            for (int k = 0; k < nalu_len; k++, sp++) {
+              d.push_back(data[sp]);
+            }
+            outNalu.push(d);
+            d.clear();
+          }
+          sp = i;
+          i += 3;
+        }
+        else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+          ep = i - 1;
+          if (ep != -1) {
+            int nalu_len = ep - sp + 1;
+            std::vector<uint8_t> d;
+            for (int k = 0; k < nalu_len; k++, sp++) {
+              d.push_back(data[sp]);
+            }
+            outNalu.push(d);
+            d.clear();
+          }
+          sp = i;
+          i += 2;
+        }
+      }
+      int res_len = pktSize - sp;
+      if (res_len != 0) {
+        std::vector<uint8_t> d;
+        for (int k = 0; k < res_len; k++, sp++) {
+          d.push_back(data[sp]);
+        }
+        outNalu.push(d);
+        d.clear();
+      }
+      int nalu_size = outNalu.size();
+      for (int k = 0; k < nalu_size; k++) {
+        std::vector<uint8_t> nalu = outNalu.front();
+        if (nalu.size()) {
+          int startLen = 0;
+          uint32_t startCode = 0;
+          for (int i = 0; i < 4; ++i) {
+            startCode = (startCode << 8) | nalu[i];
+          }
+          if (startCode != 1) {
+            if ((startCode & 0x00000f00) == 0x00000100) {
+              startLen = 3;
+            }
+            else {
+              startLen = -1;
+              throw std::runtime_error("startCode error");
+            }
+          }
+          else {
+            startLen = 4;
+          }
+          if (nalu.size() - startLen <= MTU + 1) {
+            std::vector<uint8_t> buf(nalu.size() - startLen);
+            memcpy(&buf[0], &nalu[0] + startLen, nalu.size() - startLen);
+            outData.push(buf);
+            buf.clear();
+          }
+          else {
+            int index = startLen + 1;
+            bool isFirst = true;
+            uint8_t fuIndicator = 0xe0 & nalu[startLen];
+            fuIndicator |= 0x1c;
+            uint8_t fuHeader = 0x1f & nalu[startLen];
+            do {
+              std::vector<uint8_t> buf(MTU + 2);
+              if (isFirst) {
+                fuHeader |= 0x80;
+                isFirst = false;
+              }
+              else {
+                fuHeader &= 0x1f;
+              }
+              memset(&buf[0], 0, MTU + 2);
+              memcpy(&buf[0], &fuIndicator, 1);
+              memcpy(&buf[0] + 1, &fuHeader, 1);
+              memcpy(&buf[0] + 2, &nalu[0] + index, MTU);
+              outData.push(buf);
+              buf.clear();
+              index += MTU;
+            } while (index < nalu.size() - MTU);
+            std::vector<uint8_t> buff(nalu.size() - index + 2);
+            int ssize = nalu.size() - index + 2;
+            fuHeader &= 0x1f;
+            fuHeader |= 0x40;
+            memset(&buff[0], 0, ssize);
+            memcpy(&buff[0], &fuIndicator, 1);
+            memcpy(&buff[0] + 1, &fuHeader, 1);
+            memcpy(&buff[0] + 2, &nalu[0] + index, nalu.size() - index);
+            outData.push(buff);
+            buff.clear();
+          }
+          nalu.clear();
+          ++frameCount;
+        }
+        else {
+          E_LOG("input_pkt is empty");
+        }
+        outNalu.pop();
+      }
+    }
+
   };
 
   class Tools23 {

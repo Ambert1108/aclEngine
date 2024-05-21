@@ -9,6 +9,11 @@
 #include "refer/AclLiteImageProc.h"
 #include "refer/AclLiteVideoCapBase.h"
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+}
+
 #include "seeker/common.h"
 #include "seeker/logger.h"
 #include "seeker/loggerApi.h"
@@ -169,10 +174,18 @@ namespace acle {
       close();
     }
 
-    bool open() { return initResource; }
+    bool open() { 
+      outFp_ = fopen(encodeCtx.outFile.c_str(), "wb+");
+      if (outFp_ == nullptr) {
+        E_LOG("Open file {} failed, error={}",
+          encodeCtx.outFile, strerror(errno));
+        return ACLLITE_ERROR_OPEN_FILE;
+      }
+      return initResource(); 
+    }
 
     void close() {
-      AclLiteError ret = setFrameConfig(0, 1);
+      AclLiteError ret = setFrameConfig(1, 0);
       if (ret != ACLLITE_OK) {
         E_LOG("[AclEngine::Encoder::Error] Set frame config failed, error={}", ret);
         return;
@@ -223,11 +236,11 @@ namespace acle {
       I_LOG("[Encoder] Encoder is closed");
     }
 
-    bool process(const AclFrame& input, AclPacket& output) {
+    int process(const ImageData& input, AclPacket& packet) {
       AclLiteError ret = createInputPicDesc(input);
       if (ret != ACLLITE_OK) {
         E_LOG("[AclEngine::Encoder::Error] fail to create picture description");
-        return false;
+        return -1;
       }
 
       acldvppStreamDesc* outputStreamDesc = nullptr;
@@ -236,28 +249,72 @@ namespace acle {
         static_cast<void*>(outputStreamDesc), vencFrameConfig_, (void*)this);
       if (ret != ACL_SUCCESS) {
         E_LOG("[AclEngine::Encoder::Error] encode frame failed, errorCode={}", ret);
-        return false;
+        return -1;
       }
 
       if (pakcetQueue.Empty()) {
         W_LOG("[AclEngine::Encoder::Warn] get packet failed, wait encode process");
-        return false;
+        return 1;
       }
-      output = pakcetQueue.Pop();
-      return true;
+      packet = pakcetQueue.Pop();
+      return 0;
     }
 
   private:
-    static void callback(acldvppPicDesc* input,
-      acldvppStreamDesc* output, void* user) {
+    AclLiteError saveVencFile(void* vencData, uint32_t size) {
+      AclLiteError atlRet = ACLLITE_OK;
+      void* data = vencData;
+      if (encodeCtx.runMode == ACL_HOST) {
+        data = CopyDataToHost(vencData, size, encodeCtx.runMode, MEMORY_NORMAL);
+      }
+      size_t ret = fwrite(data, 1, size, outFp_);
+      if (ret != size) {
+        E_LOG("Save venc file {} failed, need write {} bytes, "
+          "but only write {} bytes, error: {}",
+          encodeCtx.outFile, size, ret, strerror(errno));
+        atlRet = ACLLITE_ERROR_WRITE_FILE;
+      }
+      else {
+        fflush(outFp_);
+      }
+
+      if (encodeCtx.runMode == ACL_HOST) {
+        delete[]((uint8_t*)data);
+      }
+
+      return atlRet;
+    }
+
+    static void callback(acldvppPicDesc* input, acldvppStreamDesc* output, void* user) {
       uint32_t retCode = acldvppGetStreamDescRetCode(output);
       if (retCode != 0) {
         E_LOG("[AclEngine::Encoder::Error] get encode out data failed");
       }
       else {
-        AclPacket pkt(output);
+        void* data = acldvppGetStreamDescData(output);
+        uint32_t size = acldvppGetStreamDescSize(output);
+        //aclrtRunMode mode = aclrtRunMode::ACL_HOST;
+        //aclrtGetRunMode(&mode);
+        //I_LOG("runMode={}", mode);
+        data = CopyDataToHost(data, size, ACL_HOST, MEMORY_NORMAL);
+        //uint8_t* ptr = (uint8_t*)data;
+        //auto data1 = reinterpret_cast<uint8_t*>(data)[0];
+        //auto data2 = reinterpret_cast<uint8_t*>(data)[1];
+        //I_LOG("[Debug] ptr[0]={}, ptr[1]={}", data1, data2);
+        //for (int i = 0; i < 2; i++) {
+        //  uint8_t value = *(ptr + i); // 使用指针算术来访问内存
+        //  // 处理 value
+        //  I_LOG("[Debug] ptr[{}]={}", i, value);
+        //}
+        AclPacket pkt;
+        pkt.data = (uint8_t*)data;
+        pkt.size = acldvppGetStreamDescSize(output);
+        pkt.timestamp = acldvppGetStreamDescTimestamp(output);
+        pkt.eos = acldvppGetStreamDescEos(output);
+
         EncoderOwn* own = (EncoderOwn*)user;
         own->pakcetQueue.Push(pkt);
+        //own->saveVencFile(data, size);
       }
       void* data = acldvppGetPicDescData(input);
       if (!data) {
@@ -293,7 +350,15 @@ namespace acle {
         ACLLITE_LOG_ERROR("Create venc channel desc failed");
         return ACLLITE_ERROR_CREATE_VENC_CHAN_DESC;
       }
-
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_THREAD_ID_UINT64, 8, &threadId_);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_CALLBACK_PTR, 8, &callback);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_ENCODE_TYPE_UINT32, 4, &encodeCtx.enType);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_PIXEL_FORMAT_UINT32, 4, &encodeCtx.format);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_PIC_WIDTH_UINT32, 4, &encodeCtx.width);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_PIC_HEIGHT_UINT32, 4, &encodeCtx.height);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_KEY_FRAME_INTERVAL_UINT32, 4, &encodeCtx.gopSize);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_RC_MODE_UINT32, 4, &encodeCtx.rcMode);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_MAX_BITRATE_UINT32, 4, &encodeCtx.maxBitrate);
       aclvencSetChannelDescThreadId(vencChannelDesc_, threadId_);
       aclvencSetChannelDescCallback(vencChannelDesc_, callback);
       aclvencSetChannelDescEnType(vencChannelDesc_, encodeCtx.enType);
@@ -329,7 +394,7 @@ namespace acle {
       return ACLLITE_OK;
     }
 
-    AclLiteError createInputPicDesc(const AclFrame& image) {
+    AclLiteError createInputPicDesc(const ImageData& image) {
       inputPicDesc_ = acldvppCreatePicDesc();
       if (inputPicDesc_ == nullptr) {
         E_LOG("[AclEngine::Encoder::Error] Create input pic desc failed");
@@ -368,12 +433,14 @@ namespace acle {
     }
 
     AclLiteError setFrameConfig(uint8_t eos, uint8_t forceIFrame) {
+      /* 设置是否为结束帧，0：不是，1：是结束帧 <Ambert May-21-2024> */
       aclError ret = aclvencSetFrameConfigEos(vencFrameConfig_, eos);
       if (ret != ACL_SUCCESS) {
         E_LOG("[AclEngine::Encoder::Error] fail to set eos, ret={}", ret);
         return ACLLITE_ERROR_VENC_SET_EOS;
       }
 
+      /* 设置是否强制重新开启I帧，0：不强制，1：强制 <Ambert May-21-2024> */
       ret = aclvencSetFrameConfigForceIFrame(vencFrameConfig_, forceIFrame);
       if (ret != ACL_SUCCESS) {
         E_LOG("[AclEngine::Encoder::Error] fail to set venc ForceIFrame");
@@ -385,47 +452,47 @@ namespace acle {
       aclError aclRet = aclrtSetCurrentContext(encodeCtx.context);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[AclEngine::Encoder::Error] Set context for dvpp venc failed, errorCode={}", aclRet);
-        return ACLLITE_ERROR_SET_ACL_CONTEXT;
+        return false;
       }
 
       AclLiteError ret = pthread_create(&threadId_, nullptr,
         notifyCallbackFunc, (void*)this);
       if (ret != ACLLITE_OK) {
         E_LOG("[AclEngine::Encoder::Error] Create notify callback thread failed, errorCode={}", ret);
-        return ACLLITE_ERROR_CREATE_THREAD;
-      }
-
-      ret = createFrameConfig();
-      if (ret != ACLLITE_OK) {
-        E_LOG("[AclEngine::Encoder::Error] Create venc frame config failed, errorCode={}", ret);
-        return ret;
+        return false;
       }
 
       ret = createVencChannel();
       if (ret != ACLLITE_OK) {
         E_LOG("[AclEngine::Encoder::Error] Create venc channel failed, errorCode={}", ret);
-        return ret;
+        return false;
       }
 
-      //暂时不确定是否需要调用这两个函数
+      ret = createFrameConfig();
+      if (ret != ACLLITE_OK) {
+        E_LOG("[AclEngine::Encoder::Error] Create venc frame config failed, errorCode={}", ret);
+        return false;
+      }
+
       aclRet = aclrtCreateStream(&vencStream_);
       if (ret != ACL_SUCCESS) {
         E_LOG("[AclEngine::Encoder::Error] Create enc stream failed, errorCode={}", aclRet);
-        return ACLLITE_ERROR_CREATE_STREAM;
+        return false;
       }
 
       aclRet = aclrtSubscribeReport(threadId_, vencStream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[AclEngine::Encoder::Error] Venc ubscrible report failed, error={}", 
           aclRet);
-        return ACLLITE_ERROR_SUBSCRIBE_REPORT;
+        return false;
       }
 
 
       I_LOG("[AclEngine::Encoder] Init resource success");
-      return ACLLITE_OK;
+      return true;
     }
 
+    FILE* outFp_;
     CodecFormat encodeCtx;
     pthread_t threadId_;
     aclvencChannelDesc* vencChannelDesc_ = nullptr;
