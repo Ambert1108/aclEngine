@@ -75,4 +75,24 @@ namespace acle {
       //if(data) delete[] ((uint8_t*)data);
     };
   };
+
+  /**
+ * @brief generate shared pointer of dvpp memory
+ * @param [in]: buf: memory pointer, malloc by acldvppMalloc
+ * @return shared pointer of input buffer
+ */
+  #define SHARED_PTR_DVPP_BUF(buf) (std::shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { acldvppFree(p); }))
+
+ /**
+  * @brief generate shared pointer of device memory
+  * @param [in]: buf: memory pointer, malloc by acldvppMalloc
+  * @return shared pointer of input buffer
+  */
+  #define SHARED_PTR_DEV_BUF(buf) (std::shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { aclrtFree(p); }))
+
+
+  struct Resolution {
+    uint32_t width = 0;
+    uint32_t height = 0;
+  };
 }

@@ -67,21 +67,21 @@
  * @param [in]: buf: memory pointer, malloc by acldvppMalloc
  * @return shared pointer of input buffer
  */
-#define SHARED_PTR_DVPP_BUF(buf) (shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { acldvppFree(p); }))
+#define SHARED_PTR_DVPP_BUF(buf) (std::shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { acldvppFree(p); }))
 
 /**
  * @brief generate shared pointer of device memory
  * @param [in]: buf: memory pointer, malloc by acldvppMalloc
  * @return shared pointer of input buffer
  */
-#define SHARED_PTR_DEV_BUF(buf) (shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { aclrtFree(p); }))
+#define SHARED_PTR_DEV_BUF(buf) (std::shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { aclrtFree(p); }))
 
 /**
  * @brief generate shared pointer of memory
  * @param [in]: buf memory pointer, malloc by new
  * @return shared pointer of input buffer
  */
-#define SHARED_PTR_U8_BUF(buf) (shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { delete[](p); }))
+#define SHARED_PTR_U8_BUF(buf) (std::shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { delete[](p); }))
 
 /**
  * @brief calculate aligned number

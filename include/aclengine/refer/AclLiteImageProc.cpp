@@ -74,39 +74,39 @@ void AclLiteImageProc::DestroyResource()
     isReleased_ = true;
 }
 
-AclLiteError AclLiteImageProc::Init(string mode)
-{
-    aclError aclRet = aclrtCreateStream(&stream_);
-    if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("Create venc stream failed, error %d", aclRet);
-        return ACLLITE_ERROR_CREATE_STREAM;
-    }
+AclLiteError AclLiteImageProc::Init(string mode) {
+  aclError aclRet = aclrtCreateStream(&stream_);
+  if (aclRet != ACL_SUCCESS) {
+      ACLLITE_LOG_ERROR("Create venc stream failed, error %d", aclRet);
+      return ACLLITE_ERROR_CREATE_STREAM;
+  }
 
-    dvppChannelDesc_ = acldvppCreateChannelDesc();
-    if (dvppChannelDesc_ == nullptr) {
-        ACLLITE_LOG_ERROR("Create dvpp channel desc failed");
-        return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
-    }
+  dvppChannelDesc_ = acldvppCreateChannelDesc();
+  if (dvppChannelDesc_ == nullptr) {
+      ACLLITE_LOG_ERROR("Create dvpp channel desc failed");
+      return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
+  }
 
-    auto socVersion = aclrtGetSocName();
-    if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0 && mode != "") {
-        aclRet = acldvppSetChannelDescMode(dvppChannelDesc_, STR2MODE[mode]);
-        if (aclRet != ACL_SUCCESS) {
-            ACLLITE_LOG_ERROR("acldvppCreateChannel failed, aclRet = %d", aclRet);
-            return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
-        }
-    }
+  auto socVersion = aclrtGetSocName();
+  if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0 && mode != "") {
 
-    aclRet = acldvppCreateChannel(dvppChannelDesc_);
+    aclRet = acldvppSetChannelDescMode(dvppChannelDesc_, STR2MODE[mode]);
     if (aclRet != ACL_SUCCESS) {
         ACLLITE_LOG_ERROR("acldvppCreateChannel failed, aclRet = %d", aclRet);
         return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
     }
+  }
 
-    isInitOk_ = true;
-    ACLLITE_LOG_INFO("dvpp init resource ok");
+  aclRet = acldvppCreateChannel(dvppChannelDesc_);
+  if (aclRet != ACL_SUCCESS) {
+      ACLLITE_LOG_ERROR("acldvppCreateChannel failed, aclRet = %d", aclRet);
+      return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
+  }
 
-    return ACLLITE_OK;
+  isInitOk_ = true;
+  ACLLITE_LOG_INFO("dvpp init resource ok");
+
+  return true;
 }
 
 AclLiteError AclLiteImageProc::Resize(ImageData& dest, ImageData& src,

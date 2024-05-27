@@ -23,17 +23,13 @@ int main(int argc, char* argv[]) {
   //int destWidth = std::atoi(argv[5]);
   //int destHeight = std::atoi(argv[6]);
 
-  //int32_t deviceId = 1;
-  //std::string inputName = "/home/data/v1.mp4";
-  //std::string outputName = "out.mp4";
-  //int destWidth = 1280;
-  //int destHeight = 720;
   int32_t deviceId = 1;
   std::string inputName = "/home/data/v1.mp4";
-  std::string ip = "10.4.7.162";
+  std::string ip = "10.4.6.75";
   uint16_t port = 50104;
-  int destWidth = 1280;
-  int destHeight = 720;
+  int destWidth = 640;
+  int destHeight = 368;
+
   I_LOG("[main] deviceI={}, input={}, addr={}:{}, destWidth={}, destHeight={}",
     deviceId, inputName, ip, port, destWidth, destHeight);
 
@@ -76,19 +72,18 @@ int main(int argc, char* argv[]) {
   bool run = true;
   while (run) {
     ImageData frame;
-    AclLiteError ret = decoder->getFrame(frame);
+    AclLiteError ret = decoder->readFrame(frame);
     if (ret != ACLLITE_OK) break;
   
-    //ImageData newFrame;
-    //if (imager.resize(frame, newFrame, destWidth, destHeight) != ACLLITE_OK) {
-    //  newFrame = frame;
-    //}
+    ImageData newFrame;
+    if (imager.resize(frame, newFrame, destWidth, destHeight) != ACLLITE_OK) {
+      newFrame = frame;
+    }
   
     if (!encoder) {
       CodecFormat fmt;
       fmt.width = destWidth;
       fmt.height = destHeight;
-      //fmt.runMode = ACL_DEVICE;
       fmt.outFile = "test.mp4";
       aclrtGetCurrentContext(&fmt.context);
       I_LOG("[Encoder:Init] width={}, height={}, format={}, enType={}",
@@ -101,7 +96,7 @@ int main(int argc, char* argv[]) {
     }
     
     AclPacket pkt;
-    ret = encoder->process(frame, pkt);
+    ret = encoder->writeFrame(newFrame, pkt);
     if (ret != 0) {
       if (ret < 0) {
         E_LOG("encoder process failed");
