@@ -8,6 +8,16 @@
 #include <deque>
 #include <vector>
 
+int run(int num) {
+  //设置为偶数
+  return num - (num & 1);
+}
+
+int run2(int num) {
+  //设置为奇数
+  return num - !(num & 1);
+}
+
 int main(int argc, char* argv[]) {
   //int argNum = 6;
   //if ((argc < argNum) || (argv[1] == nullptr)) {
@@ -25,10 +35,11 @@ int main(int argc, char* argv[]) {
 
   int32_t deviceId = 1;
   std::string inputName = "/home/data/v1.mp4";
+  std::string inputImage = "/home/data/cat.jpg";
   std::string ip = "10.4.6.75";
   uint16_t port = 50104;
-  int destWidth = 640;
-  int destHeight = 368;
+  int destWidth = 1280;
+  int destHeight = 720;
 
   I_LOG("[main] deviceI={}, input={}, addr={}:{}, destWidth={}, destHeight={}",
     deviceId, inputName, ip, port, destWidth, destHeight);
@@ -49,6 +60,7 @@ int main(int argc, char* argv[]) {
   
   ImageHandler imager;
   imager.open();
+  ImageData img = imager.imgread(inputImage);
 
   seeker::rtp::RtpTransceiver::init(8);
 
@@ -76,9 +88,15 @@ int main(int argc, char* argv[]) {
     if (ret != ACLLITE_OK) break;
   
     ImageData newFrame;
-    if (imager.resize(frame, newFrame, destWidth, destHeight) != ACLLITE_OK) {
-      newFrame = frame;
+
+    //视频缩放
+    if (imager.resize(frame, newFrame, 320, 180) != ACLLITE_OK) {
+      //newFrame = frame;
     }
+    //I_LOG("frame width={}, height={}", frame.width, frame.height);
+
+    //图片叠加
+    //imager.overlay(newFrame, frame, 0, 0);
   
     if (!encoder) {
       CodecFormat fmt;
@@ -96,7 +114,7 @@ int main(int argc, char* argv[]) {
     }
     
     AclPacket pkt;
-    ret = encoder->writeFrame(newFrame, pkt);
+    ret = encoder->writeFrame(frame, pkt);
     if (ret != 0) {
       if (ret < 0) {
         E_LOG("encoder process failed");
