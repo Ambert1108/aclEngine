@@ -51,6 +51,32 @@ namespace acle {
     std::string outFile;
   };
 
+  struct PicDesc {
+    std::string picName;
+    uint32_t width;
+    uint32_t height;
+    acldvppJpegFormat format;
+    uint32_t jpegDecodeSize;
+  };
+
+  struct AclImage {
+    acldvppPixelFormat format;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t widthStride = 0;
+    uint32_t heightStride = 0;
+    void* data = nullptr;
+    uint32_t size = 0;
+
+    ~AclImage() {
+      if (!data) {
+        acldvppFree(data);
+        data = nullptr;
+      }
+    }
+  };
+
+
   struct AclFrame {
     acldvppPixelFormat format;
     uint32_t width = 0;

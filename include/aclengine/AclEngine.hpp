@@ -444,6 +444,278 @@ namespace acle {
         {"DVPP_CHNMODE_PNGD", DVPP_CHNMODE_PNGD}
   };
 
+  class ImageReader {
+  public:
+    ImageReader() {};
+    ~ImageReader() {};
+
+    bool open() {
+      aclError aclRet = aclrtCreateStream(&stream_);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[ImageReader::open] Create venc stream failed, error={}", aclRet);
+        return ACLLITE_ERROR_CREATE_STREAM;
+      }
+
+      aclrtGetRunMode(&runMode);
+
+      channelDesc = acldvppCreateChannelDesc();
+      if (channelDesc == nullptr) {
+        E_LOG("[ImageReader::open] Create dvpp channel desc failed");
+        return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
+      }
+
+      //auto socVersion = aclrtGetSocName();
+      //if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0) {
+      //  //mode: 指定通道描述信息中的通道模式，明确图片数据处理通道用于实现哪种功能，目前支持//VPC、JPEGD、JPEGE、PNGD功能
+      //  aclRet = acldvppSetChannelDescMode(channelDesc, DVPP_CHNMODE_JPEGD);
+      //  if (aclRet != ACL_SUCCESS) {
+      //    E_LOG("[ImageReader::open] acldvppCreateChannel failed, aclRet={}", aclRet);
+      //    return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
+      //  }
+      //}
+
+      aclRet = acldvppCreateChannel(channelDesc);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[ImageHandler::open] acldvppCreateChannel failed, aclRet={}", aclRet);
+        return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
+      }
+
+      I_LOG("[ImageHandler::open] init resource success");
+
+      return ACLLITE_OK;
+    }
+
+    void close() {
+      if (isClose) return;
+
+      destoryResource();
+
+      aclError aclRet;
+      if (channelDesc != nullptr) {
+        aclRet = acldvppDestroyChannel(channelDesc);
+        if (aclRet != ACL_SUCCESS) {
+          E_LOG("[ImageHandler::close] Destroy dvpp channel error={}", aclRet);
+        }
+        (void)acldvppDestroyChannelDesc(channelDesc);
+        channelDesc = nullptr;
+      }
+
+      if (stream_ != nullptr) {
+        aclRet = aclrtDestroyStream(stream_);
+        if (aclRet != ACL_SUCCESS) {
+          E_LOG("[ImageHandler::close] Vdec destroy stream failed, error={}", aclRet);
+        }
+        stream_ = nullptr;
+      }
+
+      isClose = true;
+    }
+
+    AclImage imgread(const std::string& file) {
+      AclImage data;
+      imgreadHandle(file, data);
+      return data;
+    }
+
+  protected:
+    void destoryResource() {
+      if (inputPicDesc != nullptr) {
+        (void)acldvppDestroyPicDesc(inputPicDesc);
+        inputPicDesc = nullptr;
+      }
+
+      if (outputPicDesc != nullptr) {
+        (void)acldvppDestroyPicDesc(outputPicDesc);
+        outputPicDesc = nullptr;
+      }
+    }
+
+  private:
+    acldvppPixelFormat checkJpegFormat(acldvppJpegFormat format) {
+      switch (format) {
+      case ACL_JPEG_CSS_444:
+        return PIXEL_FORMAT_YUV_SEMIPLANAR_444;
+      case ACL_JPEG_CSS_422:
+        return PIXEL_FORMAT_YUV_SEMIPLANAR_422;
+      case ACL_JPEG_CSS_420:
+        return PIXEL_FORMAT_YUV_SEMIPLANAR_420;
+      case ACL_JPEG_CSS_GRAY:
+        return PIXEL_FORMAT_U8C1;
+      case ACL_JPEG_CSS_440:
+        return PIXEL_FORMAT_YUV_SEMIPLANAR_440;
+      case ACL_JPEG_CSS_411:
+        return PIXEL_FORMAT_UNKNOWN;
+      case ACL_JPEG_CSS_UNKNOWN:
+        return PIXEL_FORMAT_UNKNOWN;
+      default:
+        return PIXEL_FORMAT_UNKNOWN;
+      }
+    }
+
+    void* loadImageInBuffer(PicDesc& picDesc, uint32_t& picDevBufferSize) {
+      if (picDesc.picName.empty()) {
+        E_LOG("picture file name is empty");
+        return nullptr;
+      }
+
+      FILE* fp = fopen(picDesc.picName.c_str(), "rb");
+      if (fp == nullptr) {
+        E_LOG("open file={} failed", picDesc.picName);
+        return nullptr;
+      }
+
+      fseek(fp, 0, SEEK_END);
+      uint32_t fileLen = ftell(fp);
+      fseek(fp, 0, SEEK_SET);
+
+      uint32_t inputBuffSize = fileLen;
+
+      char* inputBuff = new(std::nothrow) char[inputBuffSize];
+      size_t readSize = fread(inputBuff, sizeof(char), inputBuffSize, fp);
+      if (readSize < inputBuffSize) {
+        E_LOG("need read file={} {} bytes, but only {} readed",
+          picDesc.picName, inputBuffSize, readSize);
+        delete[] inputBuff;
+        fclose(fp);
+        return nullptr;
+      }
+
+      aclError aclRet = acldvppJpegGetImageInfoV2(inputBuff, inputBuffSize, &picDesc.width, &picDesc.height,
+        nullptr, &picDesc.format);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("get jpeg image info failed, errorCode is {}", static_cast<int32_t>(aclRet));
+        delete[] inputBuff;
+        fclose(fp);
+        return nullptr;
+      }
+
+      aclRet = acldvppJpegPredictDecSize(inputBuff, inputBuffSize, checkJpegFormat(picDesc.format), &picDesc.jpegDecodeSize);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("get jpeg decode size failed, errorCode is {}", static_cast<int32_t>(aclRet));
+        delete[] inputBuff;
+        fclose(fp);
+        return nullptr;
+      }
+
+      I_LOG("get jpeg image info successed, width={}, height={}, pixel format={}, jpg format={}, jpegDecodeSize={}",
+        picDesc.width, picDesc.height, checkJpegFormat(picDesc.format), picDesc.format, picDesc.jpegDecodeSize);
+
+      void* inBufferDev = nullptr;
+      aclError ret = acldvppMalloc(&inBufferDev, inputBuffSize);
+      if (ret != ACL_SUCCESS) {
+        delete[] inputBuff;
+        E_LOG("malloc device data buffer failed, aclRet is {}", ret);
+        fclose(fp);
+        return nullptr;
+      }
+
+      if (runMode == ACL_HOST) {
+        ret = aclrtMemcpy(inBufferDev, inputBuffSize, inputBuff, inputBuffSize, ACL_MEMCPY_HOST_TO_DEVICE);
+      }
+      else {
+        ret = aclrtMemcpy(inBufferDev, inputBuffSize, inputBuff, inputBuffSize, ACL_MEMCPY_DEVICE_TO_DEVICE);
+      }
+      if (ret != ACL_SUCCESS) {
+        E_LOG("memcpy failed. Input host buffer size is {}",
+          inputBuffSize);
+        acldvppFree(inBufferDev);
+        delete[] inputBuff;
+        fclose(fp);
+        return nullptr;
+      }
+
+      delete[] inputBuff;
+      picDevBufferSize = inputBuffSize;
+      fclose(fp);
+      return inBufferDev;
+    }
+
+    AclLiteError initDecodeOutputDesc(const PicDesc& pic, AclImage& inputImage) {
+      auto socVersion = aclrtGetSocName();
+      if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0) {
+        inputImage.width = ALIGN_UP2(pic.width);
+        inputImage.height = ALIGN_UP2(pic.height);
+        inputImage.widthStride = ALIGN_UP64(pic.width); // 64-byte alignment
+        inputImage.heightStride = ALIGN_UP16(pic.height); // 16-byte alignment
+      }
+      else {
+        inputImage.width = inputImage.width;
+        inputImage.height = inputImage.height;
+        inputImage.widthStride = ALIGN_UP128(inputImage.width); // 128-byte alignment
+        inputImage.heightStride = ALIGN_UP16(inputImage.height); // 16-byte alignment
+      }
+      if (inputImage.widthStride == 0 || inputImage.heightStride == 0) {
+        E_LOG("Input image width {} or height {} invalid",
+          inputImage.width, inputImage.height);
+        return ACLLITE_ERROR_INVALID_ARGS;
+      }
+
+      inputImage.format = checkJpegFormat(pic.format);
+      inputImage.size = pic.jpegDecodeSize;
+      aclError aclRet = acldvppMalloc(&inputImage.data, inputImage.size);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("Malloc dvpp memory failed, error:{}", aclRet);
+        return ACLLITE_ERROR_MALLOC_DVPP;
+      }
+
+      outputPicDesc = acldvppCreatePicDesc();
+      if (outputPicDesc == nullptr) {
+        E_LOG("Create dvpp pic desc failed");
+        return ACLLITE_ERROR_CREATE_PIC_DESC;
+      }
+
+      acldvppSetPicDescData(outputPicDesc, inputImage.data);
+      acldvppSetPicDescFormat(outputPicDesc, inputImage.format);
+      acldvppSetPicDescWidth(outputPicDesc, inputImage.width);
+      acldvppSetPicDescHeight(outputPicDesc, inputImage.height);
+      acldvppSetPicDescWidthStride(outputPicDesc, inputImage.widthStride);
+      acldvppSetPicDescHeightStride(outputPicDesc, inputImage.heightStride);
+      acldvppSetPicDescSize(outputPicDesc, inputImage.size);
+
+      return ACLLITE_OK;
+    }
+
+    AclLiteError imgreadHandle(const std::string& file, AclImage& dest) {
+      PicDesc pic = { file, 0, 0 };
+      uint32_t picDevBufferSize = 0;
+      void* picDevBuffer = loadImageInBuffer(pic, picDevBufferSize);
+      if (picDevBuffer == nullptr) {
+        E_LOG("get pic device buffer failed,index is 0");
+        return ACLLITE_ERROR;
+      }
+
+      AclLiteError ret = initDecodeOutputDesc(pic, dest);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("init jpg decode output source failed, ret={}", ret);
+        return ACLLITE_ERROR;
+      }
+
+      ret = acldvppJpegDecodeAsync(channelDesc, picDevBuffer, picDevBufferSize,
+        outputPicDesc, stream_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("acldvppJpegDecodeAsync failed, ret={}", ret);
+        return ACLLITE_ERROR;
+      }
+
+      ret = aclrtSynchronizeStream(stream_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("aclrtSynchronizeStream failed");
+        return ACLLITE_ERROR;
+      }
+
+      return ACLLITE_OK;
+    }
+
+    aclrtRunMode runMode;
+    aclrtStream stream_;
+    bool isClose = false;
+    void* outDevBuf; // vpc output buffer
+    uint32_t outDevBufSize;  // vpc output size
+    acldvppPicDesc* inputPicDesc; // vpc input desc
+    acldvppPicDesc* outputPicDesc; // vpc output desc
+    acldvppChannelDesc* channelDesc;
+  };
+
   class ImageHandler {
   public:
     ImageHandler() { }
@@ -458,6 +730,8 @@ namespace acle {
         E_LOG("[ImageHandler::open] Create venc stream failed, error={}", aclRet);
         return ACLLITE_ERROR_CREATE_STREAM;
       }
+
+      aclrtGetRunMode(&runMode);
 
       channelDesc = acldvppCreateChannelDesc();
       if (channelDesc == nullptr) {
@@ -509,7 +783,7 @@ namespace acle {
       isClose = true;
     }
 
-    AclLiteError resize(ImageData& src, ImageData& dest, uint32_t width, uint32_t height) {
+    AclLiteError resize(const ImageData& src, ImageData& dest, uint32_t width, uint32_t height) {
       if (src.width == width || src.height == height) {
         E_LOG("[ImageHandler::resize] src width={}, height={} equal to target size", src.width, src.height);
         return ACLLITE_ERROR_DEST_INVALID;
@@ -520,14 +794,19 @@ namespace acle {
       return ret;
     }
 
-    AclLiteError overlay(ImageData& src, ImageData& dest,
-      uint32_t targetX, uint32_t targetY) {
-      AclLiteError ret = cropAndPaste(src, dest, targetX, targetY);
+    AclLiteError crop(ImageData& src1, ImageData& dest, uint32_t targetX, uint32_t targetY, 
+      uint32_t width , uint32_t height) {
+      AclLiteError ret = cropHandle(src1, dest, targetX, targetY, width, height);
+      return ret;
+    }
+
+    AclLiteError overlay(AclImage& src1, ImageData& dest, uint32_t targetX, uint32_t targetY) {
+      AclLiteError ret = pasteHandle(src1, dest, targetX, targetY);
       return ret;
     }
 
   private:
-    //vpc资源通用释放接口
+    //vpc通用资源释放接口
     void destoryResource() {
       if (inputPicDesc != nullptr) {
         (void)acldvppDestroyPicDesc(inputPicDesc);
@@ -541,7 +820,7 @@ namespace acle {
     }
 
     //缩放功能实现
-    AclLiteError initResizeInputDesc(ImageData& inputImage) {
+    AclLiteError initResizeInputDesc(const ImageData& inputImage) {
       uint32_t alignWidth = inputImage.alignWidth;
       uint32_t alignHeight = inputImage.alignHeight;
       if (alignWidth == 0 || alignHeight == 0) {
@@ -553,8 +832,8 @@ namespace acle {
       uint32_t inputBufferSize = 0;
       if (inputImage.format == PIXEL_FORMAT_YUV_SEMIPLANAR_420 || inputImage.format == PIXEL_FORMAT_YVU_SEMIPLANAR_420) {
         inputBufferSize = YUV420SP_SIZE(alignWidth, alignHeight);
-        inputImage.width = ALIGN_UP2(inputImage.width);
-        inputImage.height = ALIGN_UP2(inputImage.height);
+        //inputImage.width = ALIGN_UP2(inputImage.width);
+        //inputImage.height = ALIGN_UP2(inputImage.height);
       }
       else if (inputImage.format == PIXEL_FORMAT_RGB_888 || inputImage.format == PIXEL_FORMAT_BGR_888) {
         inputBufferSize = RGBU8_IMAGE_SIZE(alignWidth, alignHeight);
@@ -571,8 +850,8 @@ namespace acle {
 
       acldvppSetPicDescData(inputPicDesc, inputImage.data.get());
       acldvppSetPicDescFormat(inputPicDesc, inputImage.format);
-      acldvppSetPicDescWidth(inputPicDesc, inputImage.width);
-      acldvppSetPicDescHeight(inputPicDesc, inputImage.height);
+      acldvppSetPicDescWidth(inputPicDesc, ALIGN_UP2(inputImage.width));
+      acldvppSetPicDescHeight(inputPicDesc, ALIGN_UP2(inputImage.height));
       acldvppSetPicDescWidthStride(inputPicDesc, alignWidth);
       acldvppSetPicDescHeightStride(inputPicDesc, alignHeight);
       acldvppSetPicDescSize(inputPicDesc, inputBufferSize);
@@ -625,7 +904,7 @@ namespace acle {
       return ACLLITE_OK;
     }
 
-    AclLiteError initResizeResource(ImageData& inputImage) {
+    AclLiteError initResizeResource(const ImageData& inputImage) {
       resizeConfig_ = acldvppCreateResizeConfig();
       if (resizeConfig_ == nullptr) {
         E_LOG("[ImageHandler::initResizeResource] Dvpp resize init failed for create config failed");
@@ -656,7 +935,7 @@ namespace acle {
       destoryResource();
     }
 
-    AclLiteError resizeExecute(ImageData& srcImage, ImageData& resizedImage) {
+    AclLiteError resizeExecute(const ImageData& srcImage, ImageData& resizedImage) {
       AclLiteError atlRet = initResizeResource(srcImage);
       if (atlRet != ACLLITE_OK) {
         ACLLITE_LOG_ERROR("Dvpp resize failed for init error");
@@ -683,7 +962,7 @@ namespace acle {
       if (strncmp(soc_name, "Ascend310B", sizeof("Ascend310B") - 1) == 0) {
         resizedImage.width = ALIGN_UP2(size_.width);
         resizedImage.height = ALIGN_UP2(size_.height);
-        resizedImage.alignWidth = size_.width;
+        resizedImage.alignWidth = ALIGN_UP16(size_.width);
         resizedImage.alignHeight = ALIGN_UP2(size_.height);
       }
       else {
@@ -700,14 +979,14 @@ namespace acle {
       return ACLLITE_OK;
     }
 
-    //裁剪并叠加功能实现
-    AclLiteError initCropAndPasteInputDesc(ImageData& inputImage) {
-      originalImageWidth_ = inputImage.width;
-      originalImageHeight_ = inputImage.height;
-      uint32_t alignWidth = inputImage.alignWidth;
-      uint32_t alignHeight = inputImage.alignHeight;
+    //裁剪/叠加功能实现
+
+    //裁剪/叠加功能输入图片描述初始化
+    AclLiteError initCropOrPasteInputDesc(AclImage& inputImage) {
+      uint32_t alignWidth = ALIGN_UP16(inputImage.width);
+      uint32_t alignHeight = ALIGN_UP2(inputImage.height);
       if (alignWidth == 0 || alignHeight == 0) {
-        ACLLITE_LOG_ERROR("Invalid image parameters, width %d, height %d",
+        E_LOG("Invalid image parameters, width={}, height={}",
           inputImage.width, inputImage.height);
         return ACLLITE_ERROR;
       }
@@ -720,16 +999,44 @@ namespace acle {
         inputBufferSize = RGBU8_IMAGE_SIZE(alignWidth, alignHeight);
       }
       else {
-        ACLLITE_LOG_WARNING("Dvpp only support yuv and rgb format.");
-      }
-
-      inputPicDesc = acldvppCreatePicDesc();
-      if (inputPicDesc == nullptr) {
-        ACLLITE_LOG_ERROR("Dvpp crop create pic desc failed");
+        E_LOG("Dvpp only support yuv and rgb format.");
         return ACLLITE_ERROR;
       }
 
-      acldvppSetPicDescData(inputPicDesc, inputImage.data.get());
+      if (inputImage.data == nullptr) {
+        E_LOG("input image data is nullptr");
+        acldvppFree(inputBuffer);
+        inputBuffer = nullptr;
+        return ACLLITE_ERROR;
+      }
+
+      if (inputImage.size == 0) {
+        E_LOG("input image size {}", inputImage.size);
+        acldvppFree(inputBuffer);
+        inputBuffer = nullptr;
+        return ACLLITE_ERROR;
+      }
+
+      //aclError ret = acldvppMalloc(&inputBuffer, inputBufferSize);
+      //ret = aclrtMemcpy(inputBuffer, inputBufferSize, inputImage.data, inputBufferSize,
+      //  ACL_MEMCPY_DEVICE_TO_DEVICE); 
+      //if (ret != ACL_SUCCESS) {
+      //  E_LOG("memcpy failed. Input buffer size is {}, ret={}",
+      //    inputBufferSize, ret);
+      //  acldvppFree(inputBuffer);
+      //  inputBuffer = nullptr;
+      //  return ACLLITE_ERROR;
+      //}
+
+      inputPicDesc = acldvppCreatePicDesc();
+      if (inputPicDesc == nullptr) {
+        E_LOG("Dvpp crop create pic desc failed");
+        return ACLLITE_ERROR;
+      }
+      I_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
+        inputImage.width, inputImage.height, alignWidth, alignHeight, inputImage.format, inputBufferSize);
+
+      acldvppSetPicDescData(inputPicDesc, inputImage.data);
       acldvppSetPicDescFormat(inputPicDesc, inputImage.format);
       acldvppSetPicDescWidth(inputPicDesc, inputImage.width);
       acldvppSetPicDescHeight(inputPicDesc, inputImage.height);
@@ -740,24 +1047,25 @@ namespace acle {
       return ACLLITE_OK;
     }
 
-    AclLiteError initCropAndPasteOutputDesc() {
-      int cropOutWidth = overlayOutSize_.width;
-      int cropOutHeight = overlayOutSize_.height;
-      int cropOutWidthStride = ALIGN_UP16(cropOutWidth);
-      int cropOutHeightStride = ALIGN_UP2(cropOutHeight);
-      if (cropOutWidthStride == 0 || cropOutHeightStride == 0) {
+    //裁剪输出图片描述初始化
+    AclLiteError initCropOutputDesc(ImageData& inputImage) {
+      int outWidth = cropOutSize_.width;
+      int outHeight = cropOutSize_.height;
+      int outWidthStride = ALIGN_UP16(outWidth);
+      int outHeightStride = ALIGN_UP2(outHeight);
+      if (outWidthStride == 0 || outHeightStride == 0) {
         ACLLITE_LOG_ERROR("Crop image align widht(%d) and height(%d) failed",
-          overlayOutSize_.width, overlayOutSize_.height);
+          cropOutSize_.width, cropOutSize_.height);
         return ACLLITE_ERROR;
       }
 
-      outDevBufSize = YUV420SP_SIZE(cropOutWidthStride,
-        cropOutHeightStride);
+      outDevBufSize = YUV420SP_SIZE(outWidthStride,
+        outHeightStride);
       aclError aclRet = acldvppMalloc(&outDevBuf, outDevBufSize);
       if (aclRet != ACL_SUCCESS) {
         ACLLITE_LOG_ERROR("Dvpp crop malloc output memory failed, crop "
           "width %d, height %d size %d, error %d",
-          overlayOutSize_.width, overlayOutSize_.height,
+          cropOutSize_.width, cropOutSize_.height,
           outDevBufSize, aclRet);
         return ACLLITE_ERROR;
       }
@@ -769,30 +1077,59 @@ namespace acle {
       }
       acldvppSetPicDescData(outputPicDesc, outDevBuf);
       acldvppSetPicDescFormat(outputPicDesc, PIXEL_FORMAT_YUV_SEMIPLANAR_420);
-      acldvppSetPicDescWidth(outputPicDesc, cropOutWidth);
-      acldvppSetPicDescHeight(outputPicDesc, cropOutHeight);
-      acldvppSetPicDescWidthStride(outputPicDesc, cropOutWidthStride);
-      acldvppSetPicDescHeightStride(outputPicDesc, cropOutHeightStride);
+      acldvppSetPicDescWidth(outputPicDesc, outWidth);
+      acldvppSetPicDescHeight(outputPicDesc, outHeight);
+      acldvppSetPicDescWidthStride(outputPicDesc, outWidthStride);
+      acldvppSetPicDescHeightStride(outputPicDesc, outHeightStride);
       acldvppSetPicDescSize(outputPicDesc, outDevBufSize);
 
       return ACLLITE_OK;
     }
 
-    AclLiteError initCropAndPasteResource(ImageData& inputImage) {
-      if (ACLLITE_OK != initCropAndPasteInputDesc(inputImage)) {
-        ACLLITE_LOG_ERROR("Dvpp crop init input failed");
+    //叠加输出图片描述初始化
+    AclLiteError initPasteOutputDesc(ImageData& inputImage) {
+      uint32_t widthStride = ALIGN_UP16(inputImage.width);
+      uint32_t heightStride = ALIGN_UP2(inputImage.height);
+      if (!inputImage.data) {
+        E_LOG("[ImageHandler::initPasteOutputDesc] bottom img can not be nullptr");
+        return ACLLITE_ERROR;
+      }
+      
+      if (inputImage.size == 0) {
+        E_LOG("[ImageHandler::initPasteOutputDesc] bottom img size can not be zero");
         return ACLLITE_ERROR;
       }
 
-      if (ACLLITE_OK != initCropAndPasteOutputDesc()) {
-        ACLLITE_LOG_ERROR("Dvpp crop init output failed");
+      if (inputImage.width == 0 || inputImage.height == 0) {
+        E_LOG("[ImageHandler::initPasteOutputDesc] bottom img width({}) and height({}) is invaild",
+          inputImage.width, inputImage.height);
         return ACLLITE_ERROR;
       }
+
+      uint32_t outputBufferSize = YUV420SP_SIZE(widthStride, heightStride);
+      //auto aclRet = acldvppMalloc(&outputBuffer, outputBufferSize);
+      //aclRet = aclrtMemcpy(outputBuffer, outputBufferSize, inputImage.data.get(), inputImage.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
+      //if (aclRet != ACL_SUCCESS) {
+      //  E_LOG("acl memcpy data to dev failed, image.size={}, ret={}", outputBufferSize, aclRet);
+      //  (void)acldvppFree(outputBuffer);
+      //  outputBuffer = nullptr;
+      //  return false;
+      //}
+      I_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
+        inputImage.width, inputImage.height, widthStride, heightStride, inputImage.format, outputBufferSize);
+
+      acldvppSetPicDescData(outputPicDesc, inputImage.data.get());
+      acldvppSetPicDescFormat(outputPicDesc, inputImage.format);
+      acldvppSetPicDescWidth(outputPicDesc, inputImage.width);
+      acldvppSetPicDescHeight(outputPicDesc, inputImage.height);
+      acldvppSetPicDescWidthStride(outputPicDesc, widthStride);
+      acldvppSetPicDescHeightStride(outputPicDesc, heightStride);
+      acldvppSetPicDescSize(outputPicDesc, outputBufferSize);
 
       return ACLLITE_OK;
     }
 
-    void destroyCropAndPasteResource() {
+    void destroyCropOrPasteResource() {
       if (cropArea_ != nullptr) {
         (void)acldvppDestroyRoiConfig(cropArea_);
         cropArea_ = nullptr;
@@ -802,101 +1139,98 @@ namespace acle {
         (void)acldvppDestroyRoiConfig(pasteArea_);
         pasteArea_ = nullptr;
       }
+      if (inputBuffer != nullptr) {
+        (void)acldvppFree(inputBuffer);
+        inputBuffer = nullptr;
+      }
+      if (outputBuffer != nullptr) {
+        (void)acldvppFree(outputBuffer);
+        outputBuffer = nullptr;
+      }
 
       destoryResource();
     }
 
-    AclLiteError cropAndPaste(ImageData& srcImage, ImageData& destImage, uint32_t targetX, uint32_t targetY) {
-      if (ACLLITE_OK != initCropAndPasteResource(srcImage)) {
-        ACLLITE_LOG_ERROR("Dvpp cropandpaste failed for init error");
+    AclLiteError cropHandle(ImageData& topImg, ImageData& destImage,
+      uint32_t targetX, uint32_t targetY, uint32_t width, uint32_t height) {
+
+      return ACLLITE_OK;
+    }
+
+    AclLiteError pasteHandle(AclImage& topImg, ImageData& destImg, uint32_t targetX, uint32_t targetY) {
+      //初始化输入图片信息描述
+      if (initCropOrPasteInputDesc(topImg) != ACLLITE_OK) {
         return ACLLITE_ERROR;
       }
 
-      //设置图片裁剪参数（暂不实现图片越界处理）
+      //若右偏移或下偏移大于被贴对象的宽度或高度，则需要裁剪
+      //if(pasteRightOffset > ) 
+      //计算裁剪ROI区域
       //必须为偶数
-      uint32_t cropLeftOffset = 0;
-      uint32_t cropTopOffset = 0;
+      uint32_t cropLeftOffset = 0; //相对输入图片的左偏移
+      uint32_t cropTopOffset = 0; //相对输入图片的上偏移
       
       //必须为奇数
-      uint32_t cropRightOffset = ((originalImageWidth_ >> 1) << 1) - 1;
-      uint32_t cropBottomOffset = ((originalImageHeight_ >> 1) << 1) - 1;
+      //uint32_t cropRightOffset = topImg.width - ((topImg.width & 1) ^ 1);  //相对输入图片的右偏移
+      //uint32_t cropBottomOffset = topImg.height - ((topImg.height & 1) ^ 1); //相对输入图片的下偏移
+      uint32_t cropRightOffset = 299;  //相对输入图片的右偏移
+      uint32_t cropBottomOffset = 399; //相对输入图片的下偏移
       
       //设置输入图片裁剪的ROI区域
       cropArea_ = acldvppCreateRoiConfig(cropLeftOffset, cropRightOffset,
         cropTopOffset, cropBottomOffset);
       if (cropArea_ == nullptr) {
-        ACLLITE_LOG_ERROR("acldvppCreateRoiConfig cropArea_ failed");
+        E_LOG("acldvppCreateRoiConfig cropArea_ failed");
         return ACLLITE_ERROR;
       }
 
-      //设置图片叠加参数
-      uint32_t ltHorz_ = 0; //左上X坐标
-      uint32_t rbHorz_ = 0; //右下X坐标
-      uint32_t ltVert_ = 0; //左上Y坐标
-      uint32_t rbVert_ = 0; //右下Y坐标
-      uint32_t pasteWidth = rbHorz_ - ltHorz_;
-      uint32_t pasteHeight = rbVert_ - ltVert_;
+      //初始化输出图片信息描述
+      if (initPasteOutputDesc(destImg) != ACLLITE_OK) {
+        return ACLLITE_ERROR;
+      }
+
+      //计算叠加ROI区域
+      // 必须为偶数
+      // 左偏移必须满足16对齐
+      //uint32_t pasteLeftOffset = (targetX / 16) * 16;
+      //uint32_t pasteTopOffset = targetY - (targetY & 1);
+      uint32_t pasteLeftOffset = 16;
+      uint32_t pasteTopOffset = 200;
+
+      // 必须为奇数(Ascend 310P无要求)
+      //uint32_t pasteRightOffset = pasteLeftOffset + topImg.width;
+      //pasteRightOffset = pasteRightOffset - ((pasteRightOffset & 1) ^ 1);
+      //uint32_t pasteBottomOffset = pasteTopOffset + topImg.height;
+      //pasteBottomOffset = pasteBottomOffset - ((pasteBottomOffset & 1) ^ 1);
+      uint32_t pasteRightOffset = pasteLeftOffset + 300 - 1;  // must odd
+      uint32_t pasteBottomOffset = pasteTopOffset + 400 - 1;  // must odd
       
-      // set crop area:
-      float rx = (float)originalImageWidth_ / (float)pasteWidth;
-      float ry = (float)originalImageHeight_ / (float)pasteHeight;
-
-      int dx = 0;
-      int dy = 0;
-      float r = 0.0f;
-      if (rx > ry) {
-        dx = 0;
-        r = rx;
-        dy = (pasteHeight - originalImageHeight_ / r) / 2;
-      }
-      else {
-        dy = 0;
-        r = ry;
-        dx = (pasteWidth - originalImageWidth_ / r) / 2;
-      }
-
-      // must even
-      uint32_t pasteLeftOffset = targetX & ~1;
-      // must even
-      uint32_t pasteTopOffset = targetY & ~1;
-      // must odd
-      uint32_t pasteRightOffset = pasteWidth - 2 * dx;
-      // must odd
-      uint32_t pasteBottomOffset = pasteHeight - 2 * dy;
-
       pasteArea_ = acldvppCreateRoiConfig(pasteLeftOffset, pasteRightOffset,
         pasteTopOffset, pasteBottomOffset);
       if (pasteArea_ == nullptr) {
-        ACLLITE_LOG_ERROR("acldvppCreateRoiConfig pasteArea_ failed");
+        E_LOG("acldvppCreateRoiConfig pasteArea_ failed");
         return ACLLITE_ERROR;
       }
 
-      // crop and patse pic
       aclError aclRet = acldvppVpcCropAndPasteAsync(channelDesc, inputPicDesc,
         outputPicDesc, cropArea_, pasteArea_, stream_);
       if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("acldvppVpcCropAndPasteAsync failed, aclRet = %d", aclRet);
+        E_LOG("acldvppVpcCropAndPasteAsync failed, aclRet={}", aclRet);
         return ACLLITE_ERROR;
       }
-      // END
+
       aclRet = aclrtSynchronizeStream(stream_);
       if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("crop and paste aclrtSynchronizeStream failed, aclRet = %d", aclRet);
+        E_LOG("crop and paste aclrtSynchronizeStream failed, aclRet={}", aclRet);
         return ACLLITE_ERROR;
       }
-      
-      destImage.width = pasteWidth - 2 * dx;
-      destImage.height = pasteHeight - 2 * dy;
-      destImage.alignWidth = ALIGN_UP16(pasteWidth);
-      destImage.alignHeight = ALIGN_UP2(pasteHeight);
-      destImage.size = outDevBufSize;
-      destImage.data = SHARED_PTR_DVPP_BUF(outDevBuf);
-      
-      destroyCropAndPasteResource();
+
+      destroyCropOrPasteResource();
       
       return ACLLITE_OK;
     }
 
+    aclrtRunMode runMode;
     aclrtStream stream_;
     bool isClose = false;
     void* outDevBuf; // vpc output buffer
@@ -909,10 +1243,10 @@ namespace acle {
     acldvppResizeConfig* resizeConfig_;
     Resolution size_;
 
-    //overlay
-    Resolution overlayOutSize_;
-    uint32_t originalImageWidth_ = 0;
-    uint32_t originalImageHeight_ = 0;
+    //crop and paste
+    Resolution cropOutSize_;
+    void* inputBuffer = nullptr;
+    void* outputBuffer = nullptr;
     acldvppRoiConfig* cropArea_;
     acldvppRoiConfig* pasteArea_;
   };

@@ -121,4 +121,7 @@ set(ACLE_CPP
 
 add_subdirectory(samples/decandenc)
 #add_subdirectory(samples/encode_test)
-add_subdirectory(samples/venc/src)
+#add_subdirectory(samples/venc/src)
+#add_subdirectory(samples/png)
+#add_subdirectory(samples/jpg)
+add_subdirectory(samples/cropandpaste)

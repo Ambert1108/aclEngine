@@ -15,7 +15,19 @@ int run(int num) {
 
 int run2(int num) {
   //设置为奇数
-  return num - !(num & 1);
+  return num - ((num & 1) ^ 1);
+}
+
+uint32_t SaveOutputFile(const char* fileName, const void* devPtr, uint32_t dataSize) {
+  FILE* outFileFp = fopen(fileName, "wb+");
+  void* hostPtr = nullptr;
+  aclrtMallocHost(&hostPtr, dataSize);
+  aclrtMemcpy(hostPtr, dataSize, devPtr, dataSize, ACL_MEMCPY_DEVICE_TO_HOST);
+  fwrite(hostPtr, sizeof(char), dataSize, outFileFp);
+  (void)aclrtFreeHost(hostPtr);
+  fflush(outFileFp);
+  fclose(outFileFp);
+  return 0;
 }
 
 int main(int argc, char* argv[]) {
@@ -44,7 +56,7 @@ int main(int argc, char* argv[]) {
   I_LOG("[main] deviceI={}, input={}, addr={}:{}, destWidth={}, destHeight={}",
     deviceId, inputName, ip, port, destWidth, destHeight);
 
-  AclLiteResource aclDev(deviceId, "");
+  AclLiteResource aclDev(deviceId, "", false);
   if (aclDev.Init() != ACLLITE_OK) {
     I_LOG("init acl dev failed");
     return -1;
@@ -58,9 +70,12 @@ int main(int argc, char* argv[]) {
 
   Encoder* encoder = nullptr;
   
+  ImageReader reader;
+  reader.open();
   ImageHandler imager;
   imager.open();
-  ImageData img = imager.imgread(inputImage);
+  AclImage img = reader.imgread(inputImage);
+  SaveOutputFile("check.yuv", img.data, img.size);
 
   seeker::rtp::RtpTransceiver::init(8);
 
@@ -90,13 +105,13 @@ int main(int argc, char* argv[]) {
     ImageData newFrame;
 
     //视频缩放
-    if (imager.resize(frame, newFrame, 320, 180) != ACLLITE_OK) {
-      //newFrame = frame;
-    }
+    //if (imager.resize(frame, newFrame, 320, 180) != ACLLITE_OK) {
+    //  newFrame = frame;
+    //}
     //I_LOG("frame width={}, height={}", frame.width, frame.height);
 
     //图片叠加
-    //imager.overlay(newFrame, frame, 0, 0);
+    imager.overlay(img, frame, 0, 0);
   
     if (!encoder) {
       CodecFormat fmt;

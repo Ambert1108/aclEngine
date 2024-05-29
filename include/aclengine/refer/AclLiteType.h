@@ -72,6 +72,38 @@ struct ImageData {
     uint32_t alignHeight = 0;
     uint32_t size = 0;
     std::shared_ptr<uint8_t> data = nullptr;
+
+    ImageData() = default;
+
+    ImageData(const ImageData& img) {
+      this->format = img.format;
+      this->width = img.width;
+      this->height = img.height;
+      this->alignWidth = img.alignWidth;
+      this->alignHeight = img.alignHeight;
+      this->size = img.size;
+      this->data = img.data;
+    }
+
+    ImageData(ImageData&& img) {
+      this->format = std::move(img.format);
+      this->width = std::move(img.width);
+      this->height = std::move(img.height);
+      this->alignWidth = std::move(img.alignWidth);
+      this->alignHeight = std::move(img.alignHeight);
+      this->size = std::move(img.size);
+      this->data = std::move(img.data);
+    }
+
+    ImageData& operator=(const ImageData& img) {
+      this->format = img.format;
+      this->width = img.width;
+      this->height = img.height;
+      this->alignWidth = img.alignWidth;
+      this->alignHeight = img.alignHeight;
+      this->size = img.size;
+      this->data = img.data;
+    }
 };
 
 struct FrameData {
