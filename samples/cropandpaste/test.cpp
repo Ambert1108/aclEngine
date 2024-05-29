@@ -52,8 +52,7 @@ PicDesc outPicDesc;
 using namespace std;
 
 /* Run managed resource applications, including Device, Context, and Stream*/
-Result Initparam(int argc, char* argv[])
-{
+Result Initparam(int argc, char* argv[]) {
   DIR* dir;
   if ((dir = opendir("./output")) == NULL)
     system("mkdir ./output");
@@ -212,28 +211,35 @@ void* GetDeviceBufferOfPicture(PicDesc& picDesc, uint32_t& devPicBufferSize)
 
 int main(int argc, char* argv[])
 {
-  /* 1.ACL initialization */
+  //1. acl基础数据搭建
   const char* aclConfigPath = "../src/acl.json";
   aclInit(aclConfigPath);
-
-  /* 2.Run the management resource application, including Device, Context, Stream */
-
   aclrtSetDevice(deviceId_);
   aclrtCreateContext(&context_, deviceId_);
   aclrtCreateStream(&stream_);
   aclrtGetRunMode(&runMode);
 
-  /* 3.Initialization parameters */
-  Initparam(argc, argv);
+  //2. 读取输入输出图片地址
+  if (argc != 7) {
+    ERROR_LOG("./resize infile w h outfile w h");
+    return FAILED;
+  }
+  int inw, inh, outw, outh;
+  inw = atoi(argv[2]);
+  inh = atoi(argv[3]);
+  outw = atoi(argv[5]);
+  outh = atoi(argv[6]);
+  inPicDesc = { argv[1],(uint32_t)inw,(uint32_t)inh };
+  outPicDesc = { argv[4],(uint32_t)outw,(uint32_t)outh };
   const int outputWidth = outPicDesc.width; // cur model shape is 224 * 224
   const int outputHeight = outPicDesc.height;
 
-  /* 4. Channel description information when creating image data processing channels, dvppChannelDesc_ is acldvppChannelDesc type*/
+  //3. 创建图像处理通道
   dvppChannelDesc_ = acldvppCreateChannelDesc();
-
-  /* 5. Create the image data processing channel.*/
   acldvppCreateChannel(dvppChannelDesc_);
+  INFO_LOG("dvpp init resource success");
 
+  //(可选) 读取yuv输入图片文件
   // GetPicDevBuffer4JpegD
   //uint32_t inputBuffSize = 0;
   //char* inputBuff = ReadInputFile(inPicDesc.picName, inputBuffSize);
@@ -248,18 +254,15 @@ int main(int argc, char* argv[])
   //}
   //delete[] inputBuff;
 
+  //4. 读取png/jpg输入图片文件到设备内存
   uint32_t devPicBufferSize;
   void* picDevBuffer = GetDeviceBufferOfPicture(inPicDesc, devPicBufferSize);
   if (picDevBuffer == nullptr) {
     ERROR_LOG("get pic device buffer failed,index is 0");
     return FAILED;
   }
-  //4.Create image data processing channel
-  dvppChannelDesc_ = acldvppCreateChannelDesc();
-  acldvppCreateChannel(dvppChannelDesc_);
-  INFO_LOG("dvpp init resource success");
 
-  // InitDecodeOutputDesc
+  //5. 计算【图片解码】输入图片的对齐宽高和【图片解码】输出图片的对齐宽高
   uint32_t alignWidth;
   uint32_t alignHeight;
   uint32_t decodeOutWidthStride;
@@ -280,23 +283,23 @@ int main(int argc, char* argv[])
     decodeOutHeightStride = (inPicDesc.height + 15) / 16 * 16; // 16-byte alignment
     INFO_LOG("Ascend310I Pro: width=%d, height=%d", alignWidth, alignHeight);
   }
-  // use acldvppJpegPredictDecSize to get output size.
-  // uint32_t decodeOutBufferSize = decodeOutWidthStride * decodeOutHeightStride * 3 / 2; // yuv format size
-  // uint32_t decodeOutBufferSize = testPic.jpegDecodeSize;
+
+  //6. 创建【图片解码】输出图片内存地址
   aclError ret = acldvppMalloc(&decodeOutDevBuffer_, inPicDesc.jpegDecodeSize);
   if (ret != ACL_SUCCESS) {
     ERROR_LOG("acldvppMalloc jpegOutBufferDev failed, ret = %d", ret);
     return FAILED;
   }
 
+  //7. 创建【图片解码】输出图片描述
   decodeOutputDesc_ = acldvppCreatePicDesc();
   if (decodeOutputDesc_ == nullptr) {
     ERROR_LOG("acldvppCreatePicDesc decodeOutputDesc failed");
     return FAILED;
   }
 
+  //8. 设置【图片解码】输出图片描述
   acldvppSetPicDescData(decodeOutputDesc_, decodeOutDevBuffer_);
-  // here the format shoud be same with the value you set when you get decodeOutBufferSize from
   acldvppSetPicDescFormat(decodeOutputDesc_, PIXEL_FORMAT_YUV_SEMIPLANAR_420);
   acldvppSetPicDescWidth(decodeOutputDesc_, alignWidth);
   acldvppSetPicDescHeight(decodeOutputDesc_, alignHeight);
@@ -304,6 +307,7 @@ int main(int argc, char* argv[])
   acldvppSetPicDescHeightStride(decodeOutputDesc_, decodeOutHeightStride);
   acldvppSetPicDescSize(decodeOutputDesc_, inPicDesc.jpegDecodeSize);
 
+  //8. 解码输入图片，并将数据存入【图片解码】输出图片内存地址
   ret = acldvppJpegDecodeAsync(dvppChannelDesc_, picDevBuffer, devPicBufferSize,
     decodeOutputDesc_, stream_);
   if (ret != ACL_SUCCESS) {
@@ -311,12 +315,14 @@ int main(int argc, char* argv[])
     return FAILED;
   }
 
+  //9. 等待解码完成
   ret = aclrtSynchronizeStream(stream_);
   if (ret != ACL_SUCCESS) {
     ERROR_LOG("aclrtSynchronizeStream failed");
     return FAILED;
   }
 
+  //10. 计算裁剪ROI区域
   uint32_t oddNum = 1;
   uint32_t cropSizeWidth = 320;
   uint32_t cropSizeHeight = 150;
@@ -327,6 +333,7 @@ int main(int argc, char* argv[])
   acldvppRoiConfig* cropArea_ = acldvppCreateRoiConfig(cropLeftOffset, cropRightOffset,
     cropTopOffset, cropBottomOffset);
 
+  //11. 计算叠加ROI区域
   uint32_t pasteLeftOffset = 16;  // must even
   uint32_t pasteRightOffset = pasteLeftOffset + cropSizeWidth - oddNum;  // must odd
   uint32_t pasteTopOffset = 200;  // must even
@@ -334,16 +341,20 @@ int main(int argc, char* argv[])
   acldvppRoiConfig* pasteArea_ = acldvppCreateRoiConfig(pasteLeftOffset, pasteRightOffset,
     pasteTopOffset, pasteBottomOffset);
 
+  //12. 设置【图片叠加】图片对齐参数
   uint32_t widthAlignment = 16;
   uint32_t heightAlignment = 2;
   uint32_t sizeAlignment = 3;
   uint32_t sizeNum = 2;
+
+  //13. 计算【图片叠加】输入图片对齐宽高
   uint32_t inputWidth = inPicDesc.width;
   uint32_t inputHeight = inPicDesc.height;
   uint32_t jpegOutWidthStride = AlignmentHelper(inputWidth, widthAlignment);
   uint32_t jpegOutHeightStride = AlignmentHelper(inputHeight, heightAlignment);
   uint32_t jpegOutBufferSize = jpegOutWidthStride * jpegOutHeightStride * sizeAlignment / sizeNum;
 
+  //14. 计算【图片叠加】输出图片对齐宽高
   void* vpcOutBufferDev_ = nullptr;
   int dvppOutWidth = inPicDesc.width;
   int dvppOutHeight = inPicDesc.height;
@@ -353,8 +364,13 @@ int main(int argc, char* argv[])
   //int dvppOutHeight = outputHeight;
   //int dvppOutWidthStride = AlignmentHelper(outputWidth, widthAlignment);
   //int dvppOutHeightStride = AlignmentHelper(outputHeight, heightAlignment);
+
+  //15. 申请【图片叠加】输出图片内存地址
   uint32_t vpcOutBufferSize_ = dvppOutWidthStride * dvppOutHeightStride * sizeAlignment / sizeNum;
   aclError aclRet = acldvppMalloc(&vpcOutBufferDev_, vpcOutBufferSize_);
+
+  //16. 因为该实验是在【图片叠加】输入图片中扣出一块区域，再贴回输入图片的叠加区域，因此先对输入图片进行一次拷贝
+  //    作为输出图片内存地址使用。同时由于输入图片内存地址位于设备内存中，因此使用ACL_MEMCPY_DEVICE_TO_DEVICE
   ret = aclrtMemcpy(vpcOutBufferDev_, vpcOutBufferSize_, decodeOutDevBuffer_, jpegOutBufferSize,
     ACL_MEMCPY_DEVICE_TO_DEVICE);
   if (ret != ACL_SUCCESS) {
@@ -364,6 +380,7 @@ int main(int argc, char* argv[])
     return -1;
   }
 
+  //17. 创建并设置【图片叠加】输入图片描述
   acldvppPicDesc* vpcInputDesc_ = acldvppCreatePicDesc();
   acldvppSetPicDescData(vpcInputDesc_, decodeOutDevBuffer_); // JpegD -> vpcCropAndPaste
   acldvppSetPicDescFormat(vpcInputDesc_, PIXEL_FORMAT_YUV_SEMIPLANAR_420);
@@ -374,6 +391,7 @@ int main(int argc, char* argv[])
   acldvppSetPicDescSize(vpcInputDesc_, jpegOutBufferSize);
   INFO_LOG("JpegPicDesc w=%d/%d,h=%d/%d,vpcOutBufferSize=%u", inputWidth, jpegOutWidthStride, inputHeight, jpegOutHeightStride, jpegOutBufferSize);
 
+  //18. 创建并设置【图片叠加】输出图片描述
   acldvppPicDesc* vpcOutputDesc_ = acldvppCreatePicDesc();
   INFO_LOG("acldvppCreatePicDesc w=%d/%d,h=%d/%d,vpcOutBufferSize=%u", dvppOutWidth, dvppOutWidthStride, dvppOutHeight, dvppOutHeightStride, vpcOutBufferSize_);
   acldvppSetPicDescData(vpcOutputDesc_, vpcOutBufferDev_);
@@ -384,11 +402,12 @@ int main(int argc, char* argv[])
   acldvppSetPicDescHeightStride(vpcOutputDesc_, dvppOutHeightStride);
   acldvppSetPicDescSize(vpcOutputDesc_, vpcOutBufferSize_);
 
-  // crop and patse pic
+  //19. 叠加输入图片到输出图片上
   acldvppVpcCropAndPasteAsync(dvppChannelDesc_, vpcInputDesc_,
     vpcOutputDesc_, cropArea_, pasteArea_, stream_);
   aclrtSynchronizeStream(stream_);
 
+  //20. 释放资源
   (void)acldvppDestroyRoiConfig(cropArea_);
   cropArea_ = nullptr;
   (void)acldvppDestroyRoiConfig(pasteArea_);
