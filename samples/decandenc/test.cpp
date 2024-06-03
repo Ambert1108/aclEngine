@@ -30,6 +30,14 @@ uint32_t SaveOutputFile(const char* fileName, const void* devPtr, uint32_t dataS
   return 0;
 }
 
+uint32_t AlignmentHelper(uint32_t origSize, uint32_t alignment) {
+  if (alignment == 0) {
+    return 0;
+  }
+  uint32_t alignmentH = alignment - 1;
+  return (origSize + alignmentH) / alignment * alignment;
+}
+
 int main(int argc, char* argv[]) {
   //int argNum = 6;
   //if ((argc < argNum) || (argv[1] == nullptr)) {
@@ -46,7 +54,7 @@ int main(int argc, char* argv[]) {
   //int destHeight = std::atoi(argv[6]);
 
   int32_t deviceId = 1;
-  std::string inputName = "/home/data/v1.mp4";
+  std::string inputName = "/home/data/v2.mp4";
   std::string inputImage = "/home/data/cat.jpg";
   std::string ip = "10.4.6.75";
   uint16_t port = 50104;
@@ -75,7 +83,7 @@ int main(int argc, char* argv[]) {
   ImageHandler imager;
   imager.open();
   AclImage img = reader.imgread(inputImage);
-  SaveOutputFile("check.yuv", img.data, img.size);
+  //SaveOutputFile("check.yuv", img.data, img.size);
 
   seeker::rtp::RtpTransceiver::init(8);
 
@@ -111,7 +119,7 @@ int main(int argc, char* argv[]) {
     //I_LOG("frame width={}, height={}", frame.width, frame.height);
 
     //图片叠加
-    imager.overlay(img, frame, 0, 0);
+    imager.overlay(img, frame, 300, 200);
   
     if (!encoder) {
       CodecFormat fmt;
@@ -181,87 +189,3 @@ int main(int argc, char* argv[]) {
 
 	return 0;
 }
-
-//int main(int argc, char* argv[]) {
-//  int argNum = 5;
-//  if ((argc < argNum) || (argv[1] == nullptr)) {
-//    std::cout << "Please input: ./test <device_id> <input_file> <output_file> <reszie_width> <resize_height>" << std::endl;
-//    return ACLLITE_ERROR;
-//  }
-//
-//  int32_t deviceId = std::atoi(argv[1]);
-//  std::string inputName = std::string(argv[2]);
-//  std::string outputName = std::string(argv[3]);
-//  int destWidth = std::atoi(argv[4]);
-//  int destHeight = std::atoi(argv[5]);
-//  ACLLITE_LOG_INFO("[main] deviceI=%d, input=%s, output=%s, destWidth=%d, destHeight=%d", 
-//    deviceId, inputName.c_str(), outputName.c_str(), destWidth, destHeight);
-//
-//
-//  AclLiteResource aclDev(deviceId, "");
-//  aclDev.Init();
-//  AclLiteVideoProc* decoder = new AclLiteVideoProc(inputName, deviceId);
-//  if (!decoder->IsOpened()) {
-//    delete decoder;
-//    ACLLITE_LOG_ERROR("[Decoder::IsOpened] Failed to open vdec");
-//    return ACLLITE_ERROR;
-//  }
-//
-//  AclLiteVideoProc* encoder = nullptr;
-//  AclLiteImageProc* tool = new AclLiteImageProc();
-//  AclLiteError ret = tool->Init();
-//  if (ret) {
-//    ACLLITE_LOG_ERROR("tool init failed, error %d", ret);
-//    return ACLLITE_ERROR;
-//  }
-//
-//  bool run = true;
-//  while (run) {
-//    ImageData frame;
-//    AclLiteError ret = decoder->Read(frame);
-//    if (ret != ACLLITE_OK) {
-//      break;
-//    }
-//
-//    ImageData newFrame;
-//    tool->Resize(newFrame, frame, destWidth, destHeight);
-//
-//    if (!encoder) {
-//      VencConfig vencInfo;
-//      vencInfo.maxWidth = destWidth;
-//      vencInfo.maxHeight = destHeight;
-//      vencInfo.outFile = outputName;
-//      ACLLITE_LOG_INFO("[Encoder:Init] width=%d, height=%d, outFile=%s, format=%d, enType=%d",
-//        vencInfo.maxWidth, vencInfo.maxHeight, vencInfo.outFile.c_str(), vencInfo.format, vencInfo.enType);
-//      encoder = new AclLiteVideoProc(vencInfo);
-//      if (!encoder->IsOpened()) {
-//        delete encoder;
-//        ACLLITE_LOG_ERROR("[Encoder::OpenVideoCapture] Failed to open venc");
-//        return ACLLITE_ERROR;
-//      }
-//    }
-//
-//    ret = encoder->Read(newFrame);
-//    if (ret != ACLLITE_OK) {
-//      break;
-//    }
-//  }
-//
-//
-//  if (decoder != nullptr) {
-//    decoder->Close();
-//    delete decoder;
-//  }
-//  ACLLITE_LOG_INFO("[Decoder::close] Decoder is closed");
-//
-//  if (encoder != nullptr) {
-//    encoder->Close();
-//    delete encoder;
-//  }
-//  ACLLITE_LOG_INFO("[Encoder::close] Encoder is closed");
-//
-//
-//  ACLLITE_LOG_INFO("[main] dec and enc test finish");
-//
-//  return 0;
-//}

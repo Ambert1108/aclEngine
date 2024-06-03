@@ -17,10 +17,10 @@ namespace acle {
   struct CodecFormat {
     uint32_t width = 0;
     uint32_t height = 0;
-    uint32_t maxBitrate = 960;
+    uint32_t maxBitrate = 2000;
 
     /* 关键帧间隔 <Ambert May-20-2024>*/
-    uint32_t gopSize = 12;
+    uint32_t gopSize = 60;
 
     /*
     * 码率控制模式：默认为0，使用CBR

@@ -1,4 +1,5 @@
 #include "aclengine/AclEngine.hpp"
+#include "VideoEngine23.hpp"
 
 int main() {
   I_LOG("test encoder death handle start");
@@ -11,7 +12,6 @@ int main() {
   acle::CodecFormat fmt;
   fmt.width = 1280;
   fmt.height = 720;
-  aclrtGetCurrentContext(&fmt.context);
   acle::Encoder* encoder = new acle::Encoder(fmt);
   encoder->open();
   encoder->close();

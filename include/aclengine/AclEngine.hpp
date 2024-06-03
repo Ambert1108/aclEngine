@@ -1,7 +1,8 @@
 #pragma once
-#include "acl/acl.h"
 #include "core/Types.h"
 #include "core/SafeQueue.hpp"
+ 
+#include "acl/acl.h"
 #include "refer/AclLiteUtils.h"
 #include "refer/AclLiteError.h"
 #include "refer/AclLiteResource.h"
@@ -739,15 +740,15 @@ namespace acle {
         return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
       }
 
-      auto socVersion = aclrtGetSocName();
-      if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0 && mode != "") {
-        //mode: 指定通道描述信息中的通道模式，明确图片数据处理通道用于实现哪种功能，目前支持VPC、JPEGD、JPEGE、PNGD功能
-        aclRet = acldvppSetChannelDescMode(channelDesc, STR2MODE[mode]);
-        if (aclRet != ACL_SUCCESS) {
-          E_LOG("[ImageHandler::open] acldvppCreateChannel failed, aclRet={}", aclRet);
-          return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
-        }
-      }
+      //auto socVersion = aclrtGetSocName();
+      //if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0 && mode != "") {
+      //  //mode: 指定通道描述信息中的通道模式，明确图片数据处理通道用于实现哪种功能，目前支持VPC、JPEGD、JPEGE、PNGD功能
+      //  aclRet = acldvppSetChannelDescMode(channelDesc, STR2MODE[mode]);
+      //  if (aclRet != ACL_SUCCESS) {
+      //    E_LOG("[ImageHandler::open] acldvppCreateChannel failed, aclRet={}", aclRet);
+      //    return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
+      //  }
+      //}
 
       aclRet = acldvppCreateChannel(channelDesc);
       if (aclRet != ACL_SUCCESS) {
@@ -1118,6 +1119,11 @@ namespace acle {
       I_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, widthStride, heightStride, inputImage.format, outputBufferSize);
 
+      outputPicDesc = acldvppCreatePicDesc();
+      if (outputPicDesc == nullptr) {
+        ACLLITE_LOG_ERROR("Dvpp crop create pic desc failed");
+        return ACLLITE_ERROR;
+      }
       acldvppSetPicDescData(outputPicDesc, inputImage.data.get());
       acldvppSetPicDescFormat(outputPicDesc, inputImage.format);
       acldvppSetPicDescWidth(outputPicDesc, inputImage.width);
@@ -1171,10 +1177,10 @@ namespace acle {
       uint32_t cropTopOffset = 0; //相对输入图片的上偏移
       
       //必须为奇数
-      //uint32_t cropRightOffset = topImg.width - ((topImg.width & 1) ^ 1);  //相对输入图片的右偏移
-      //uint32_t cropBottomOffset = topImg.height - ((topImg.height & 1) ^ 1); //相对输入图片的下偏移
-      uint32_t cropRightOffset = 299;  //相对输入图片的右偏移
-      uint32_t cropBottomOffset = 399; //相对输入图片的下偏移
+      uint32_t cropRightOffset = topImg.width - ((topImg.width & 1) ^ 1);  //相对输入图片的右偏移
+      uint32_t cropBottomOffset = topImg.height - ((topImg.height & 1) ^ 1); //相对输入图片的下偏移
+      //uint32_t cropRightOffset = 299;  //相对输入图片的右偏移
+      //uint32_t cropBottomOffset = 399; //相对输入图片的下偏移
       
       //设置输入图片裁剪的ROI区域
       cropArea_ = acldvppCreateRoiConfig(cropLeftOffset, cropRightOffset,
@@ -1192,18 +1198,18 @@ namespace acle {
       //计算叠加ROI区域
       // 必须为偶数
       // 左偏移必须满足16对齐
-      //uint32_t pasteLeftOffset = (targetX / 16) * 16;
-      //uint32_t pasteTopOffset = targetY - (targetY & 1);
-      uint32_t pasteLeftOffset = 16;
-      uint32_t pasteTopOffset = 200;
+      uint32_t pasteLeftOffset = (targetX / 16) * 16;
+      uint32_t pasteTopOffset = targetY - (targetY & 1);
+      //uint32_t pasteLeftOffset = 16;
+      //uint32_t pasteTopOffset = 200;
 
       // 必须为奇数(Ascend 310P无要求)
-      //uint32_t pasteRightOffset = pasteLeftOffset + topImg.width;
-      //pasteRightOffset = pasteRightOffset - ((pasteRightOffset & 1) ^ 1);
-      //uint32_t pasteBottomOffset = pasteTopOffset + topImg.height;
-      //pasteBottomOffset = pasteBottomOffset - ((pasteBottomOffset & 1) ^ 1);
-      uint32_t pasteRightOffset = pasteLeftOffset + 300 - 1;  // must odd
-      uint32_t pasteBottomOffset = pasteTopOffset + 400 - 1;  // must odd
+      uint32_t pasteRightOffset = pasteLeftOffset + topImg.width;
+      pasteRightOffset = pasteRightOffset - ((pasteRightOffset & 1) ^ 1);
+      uint32_t pasteBottomOffset = pasteTopOffset + topImg.height;
+      pasteBottomOffset = pasteBottomOffset - ((pasteBottomOffset & 1) ^ 1);
+      //uint32_t pasteRightOffset = pasteLeftOffset + 300 - 1;  // must odd
+      //uint32_t pasteBottomOffset = pasteTopOffset + 400 - 1;  // must odd
       
       pasteArea_ = acldvppCreateRoiConfig(pasteLeftOffset, pasteRightOffset,
         pasteTopOffset, pasteBottomOffset);

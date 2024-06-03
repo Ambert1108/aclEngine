@@ -82,18 +82,18 @@ message(STATUS "swscale lib:${SWSCALE_LIBRARY}")
 
 # Header path
 include_directories(
-    ../inc/
+    #../inc/
     $ENV{INSTALL_DIR}/runtime/include/
 	$ENV{THIRDPART_PATH}/include/
-    ${PROJECT_SOURCE_DIR}/include/
+    #${PROJECT_SOURCE_DIR}/include/
     $ENV{THIRDPART_PATH}/include/acllite
 )
 
 # add host lib path
 link_directories(
-    $ENV{INSTALL_DIR}/runtime/lib64/
+    $ENV{INSTALL_DIR}/runtime/lib64/stub
     $ENV{THIRDPART_PATH}/lib/
-    $ENV{INSTALL_DIR}/driver
+    #$ENV{INSTALL_DIR}/driver
 )
 
 set(ACLE_DIR "${PROJECT_SOURCE_DIR}/include/aclengine/refer")
@@ -119,9 +119,9 @@ set(ACLE_CPP
     #${ACLE_DIR}/AclLiteModel.cpp 
     )
 
-add_subdirectory(samples/decandenc)
+#add_subdirectory(samples/decandenc)
 #add_subdirectory(samples/encode_test)
-#add_subdirectory(samples/venc/src)
+add_subdirectory(samples/venc/src)
 #add_subdirectory(samples/png)
 #add_subdirectory(samples/jpg)
-add_subdirectory(samples/cropandpaste)
+#add_subdirectory(samples/cropandpaste)
