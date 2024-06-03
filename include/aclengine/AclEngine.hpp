@@ -125,6 +125,7 @@ namespace acle {
     void close() {
       if (!needClose) return;
       needClose = false;
+      bool flag = false;
 
       if (vencFrameConfig_) {
         AclLiteError ret = setFrameConfig(1, 0);
@@ -141,6 +142,11 @@ namespace acle {
         }
       }
 
+      if (isWork.load()) {
+        isWork.store(false);
+        flag = true;
+      }
+
       if (vencFrameConfig_) {
         (void)aclvencDestroyFrameConfig(vencFrameConfig_);
         vencFrameConfig_ = nullptr;
@@ -152,10 +158,16 @@ namespace acle {
           acldvppFree(data);
         }
         acldvppDestroyPicDesc(inputPicDesc_);
+        inputPicDesc_ = nullptr;
       }
 
       if (vencStream_) {
-        aclError ret = aclrtDestroyStream(vencStream_);
+        aclrtSynchronizeStream(vencStream_);
+        aclError ret = aclrtUnSubscribeReport(threadId_, vencStream_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("[Encoder::close] unSubscribe stream failed, error={}", ret);
+        }
+        ret = aclrtDestroyStream(vencStream_);
         if (ret != ACL_SUCCESS) {
           E_LOG("[Encoder::close] destroy stream failed, error={}", ret);
         }
@@ -171,8 +183,7 @@ namespace acle {
         vencChannelDesc_ = nullptr;
       }
 
-      if (isWork.load()) {
-        isWork.store(false);
+      if (flag) {
         void* res = nullptr;
         pthread_cancel(threadId_);
         pthread_join(threadId_, &res);
@@ -249,11 +260,6 @@ namespace acle {
         own->pakcetQueue.Push(pkt);
         //own->saveVencFile(data, size);
       }
-      void* data = acldvppGetPicDescData(input);
-      if (!data) {
-        acldvppFree(data);
-      }
-      acldvppDestroyPicDesc(input);
     }
 
     static void* notifyCallbackFunc(void* args) {
@@ -329,7 +335,16 @@ namespace acle {
     }
 
     AclLiteError createInputPicDesc(const ImageData& image) {
-      inputPicDesc_ = acldvppCreatePicDesc();
+      if (inputPicDesc_) {
+        void* data = acldvppGetPicDescData(inputPicDesc_);
+        if (!data) {
+          acldvppFree(data);
+        }
+        acldvppDestroyPicDesc(inputPicDesc_);
+        inputPicDesc_ = nullptr;
+      }
+
+      if (!inputPicDesc_) inputPicDesc_ = acldvppCreatePicDesc();
       if (inputPicDesc_ == nullptr) {
         E_LOG("[Encoder::createInputPicDesc] Create input pic desc failed");
         return ACLLITE_ERROR_CREATE_PIC_DESC;
@@ -384,6 +399,9 @@ namespace acle {
     }
 
     bool initResource() {
+      if (encodeCtx.context == nullptr) {
+        aclrtGetCurrentContext(&encodeCtx.context);
+      }
       aclError aclRet = aclrtSetCurrentContext(encodeCtx.context);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[Encoder::initResource] Set context for dvpp venc failed, errorCode={}", aclRet);
@@ -414,7 +432,7 @@ namespace acle {
         E_LOG("[Encoder::initResource] Create enc stream failed, errorCode={}", aclRet);
         return false;
       }
-
+      
       aclRet = aclrtSubscribeReport(threadId_, vencStream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[Encoder::initResource] Venc ubscrible report failed, error={}", aclRet);

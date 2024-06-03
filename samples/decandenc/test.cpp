@@ -78,11 +78,11 @@ int main(int argc, char* argv[]) {
 
   Encoder* encoder = nullptr;
   
-  ImageReader reader;
-  reader.open();
-  ImageHandler imager;
-  imager.open();
-  AclImage img = reader.imgread(inputImage);
+  //ImageReader reader;
+  //reader.open();
+  //ImageHandler imager;
+  //imager.open();
+  //AclImage img = reader.imgread(inputImage);
   //SaveOutputFile("check.yuv", img.data, img.size);
 
   seeker::rtp::RtpTransceiver::init(8);
@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
     //I_LOG("frame width={}, height={}", frame.width, frame.height);
 
     //图片叠加
-    imager.overlay(img, frame, 300, 200);
+    //imager.overlay(img, frame, 300, 200);
   
     if (!encoder) {
       CodecFormat fmt;
@@ -176,7 +176,6 @@ int main(int argc, char* argv[]) {
   }
   
   if (decoder != nullptr) {
-    decoder->close();
     delete decoder;
   }
   

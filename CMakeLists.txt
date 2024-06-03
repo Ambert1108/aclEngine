@@ -119,7 +119,7 @@ set(ACLE_CPP
     #${ACLE_DIR}/AclLiteModel.cpp 
     )
 
-#add_subdirectory(samples/decandenc)
+add_subdirectory(samples/decandenc)
 #add_subdirectory(samples/encode_test)
 add_subdirectory(samples/venc/src)
 #add_subdirectory(samples/png)
