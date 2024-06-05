@@ -91,6 +91,7 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<seeker::rtp::RtpTransceiver> sender = std::make_unique<seeker::rtp::RtpTransceiver>("huawei", 32);
   sender->open("0.0.0.0", 41200);
   sender->setDestination(ip, port);
+  seeker::rtp::Notifier
 
   AVPacket* pkt = av_packet_alloc();
   std::queue<std::vector<uint8_t>> rtpBuf = {};

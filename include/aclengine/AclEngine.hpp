@@ -1052,7 +1052,7 @@ namespace acle {
         E_LOG("Dvpp crop create pic desc failed");
         return ACLLITE_ERROR;
       }
-      I_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
+      D_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, alignWidth, alignHeight, inputImage.format, inputBufferSize);
 
       acldvppSetPicDescData(inputPicDesc, inputImage.data);
@@ -1134,7 +1134,7 @@ namespace acle {
       //  outputBuffer = nullptr;
       //  return false;
       //}
-      I_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
+      D_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, widthStride, heightStride, inputImage.format, outputBufferSize);
 
       outputPicDesc = acldvppCreatePicDesc();
