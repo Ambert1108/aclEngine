@@ -69,11 +69,11 @@ namespace acle {
     uint32_t size = 0;
 
     ~AclImage() {
-      if (!data) {
+      if (data) {
         acldvppFree(data);
         data = nullptr;
       }
-    }
+    };
   };
 
 
@@ -98,7 +98,10 @@ namespace acle {
     AclPacket() = default;
 
     ~AclPacket() {
-      //if(data) delete[] ((uint8_t*)data);
+      if (data) {
+        acldvppFree(data);
+        data = nullptr;
+      }
     };
   };
 

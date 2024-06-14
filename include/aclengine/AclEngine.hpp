@@ -337,7 +337,7 @@ namespace acle {
     AclLiteError createInputPicDesc(const ImageData& image) {
       if (inputPicDesc_) {
         void* data = acldvppGetPicDescData(inputPicDesc_);
-        if (!data) {
+        if (data) {
           acldvppFree(data);
         }
         acldvppDestroyPicDesc(inputPicDesc_);

@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
   int32_t deviceId = 1;
   std::string inputName = "/home/data/v2.mp4";
   std::string inputImage = "/home/data/cat.jpg";
-  std::string ip = "10.4.6.75";
+  std::string ip = "10.4.6.196";
   uint16_t port = 50104;
   int destWidth = 1280;
   int destHeight = 720;
@@ -91,7 +91,6 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<seeker::rtp::RtpTransceiver> sender = std::make_unique<seeker::rtp::RtpTransceiver>("huawei", 32);
   sender->open("0.0.0.0", 41200);
   sender->setDestination(ip, port);
-  seeker::rtp::Notifier
 
   AVPacket* pkt = av_packet_alloc();
   std::queue<std::vector<uint8_t>> rtpBuf = {};
