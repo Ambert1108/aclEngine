@@ -55,6 +55,14 @@
  */
 #define YUV420SP_SIZE(width, height) ((width) * (height) * 3 / 2)
 
+ /**
+* @brief calculate YUVSP444 image size
+* @param [in]: width:  image width
+* @param [in]: height: image height
+* @return bytes size of image
+*/
+#define YUV444SP_SIZE(width, height) ((width) * (height) * 3)
+
 /**
  * @brief calculate YUVSP420 nv12 load to opencv mat height paramter
  * @param [in]: height: yuv image height

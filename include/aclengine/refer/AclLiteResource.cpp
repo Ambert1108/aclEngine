@@ -41,15 +41,15 @@ AclLiteResource::~AclLiteResource()
 AclLiteError AclLiteResource::Init()
 {
     // ACL init
-    aclError ret = aclInit(aclConfig_.c_str());
-    if (ret != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("Acl init failed, errorcode is: %d", ret);
-        return ACLLITE_ERROR;
-    }
-    ACLLITE_LOG_INFO("Acl init ok");
+    //aclError ret = aclInit(aclConfig_.c_str());
+    //if (ret != ACL_SUCCESS) {
+    //    ACLLITE_LOG_ERROR("Acl init failed, errorcode is: %d", ret);
+    //    return ACLLITE_ERROR;
+    //}
+    //ACLLITE_LOG_INFO("Acl init ok");
 
     // open device
-    ret = aclrtSetDevice(deviceId_);
+  aclError ret = aclrtSetDevice(deviceId_);
     if (ret != ACL_SUCCESS) {
         ACLLITE_LOG_ERROR("Acl open device %d failed, errorCode is : %d", deviceId_, ret);
         return ACLLITE_ERROR;
@@ -118,11 +118,11 @@ void AclLiteResource::Release()
     }
     ACLLITE_LOG_INFO("Reset device %d ok", deviceId_);
 
-    ret = aclFinalize();
-    if (ret != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("finalize acl failed, errorCode is : %d", ret);
-    }
-    ACLLITE_LOG_INFO("Finalize acl ok");
+    //ret = aclFinalize();
+    //if (ret != ACL_SUCCESS) {
+    //    ACLLITE_LOG_ERROR("finalize acl failed, errorCode is : %d", ret);
+    //}
+    //ACLLITE_LOG_INFO("Finalize acl ok");
 
     isReleased_ = true;
 }

@@ -32,10 +32,11 @@ link_directories(
   ${MX_SDK_HOME}/lib/modelpostprocessors/
   ${MX_SDK_HOME}/opensource/lib/
   ${MX_SDK_HOME}/opensource/lib64/
+  $ENV{INSTALL_DIR}/runtime/lib64/stub/
+  $ENV{THIRDPART_PATH}/lib/
 )
 
 add_executable(${SAMPLE_NAME} test.cpp)
-target_include_directories(${SAMPLE_NAME} PUBLIC MxBase/MxBase.h)
 target_link_libraries(${SAMPLE_NAME} glog mxbase plugintoolkit mxpidatatype streammanager cpprest mindxsdk_protobuf)
 
 #install(TARGETS main DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
