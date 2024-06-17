@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
   int32_t deviceId = 1;
   std::string inputName = "/home/data/v2.mp4";
   std::string inputImage = "/home/data/cat.jpg";
-  std::string ip = "10.4.6.196";
+  std::string ip = "10.4.6.117";
   uint16_t port = 50104;
   int destWidth = 1280;
   int destHeight = 720;
@@ -71,18 +71,18 @@ int main(int argc, char* argv[]) {
   }
   
   using namespace acle;
-  Decoder* decoder = new Decoder(inputName, deviceId, nullptr);
+  Decoder23* decoder = new Decoder23(inputName, deviceId, nullptr);
   if (decoder->open() != 0) {
     return -1;
   }
 
   Encoder* encoder = nullptr;
   
-  //ImageReader reader;
-  //reader.open();
-  //ImageHandler imager;
-  //imager.open();
-  //AclImage img = reader.imgread(inputImage);
+  ImageReader reader;
+  reader.open();
+  ImageHandler imager;
+  imager.open();
+  AclImage img = reader.imgread(inputImage);
   //SaveOutputFile("check.yuv", img.data, img.size);
 
   seeker::rtp::RtpTransceiver::init(8);
@@ -119,13 +119,13 @@ int main(int argc, char* argv[]) {
     //I_LOG("frame width={}, height={}", frame.width, frame.height);
 
     //图片叠加
-    //imager.overlay(img, frame, 300, 200);
+    imager.overlay(img, frame, 300, 200);
   
     if (!encoder) {
       CodecFormat fmt;
       fmt.width = destWidth;
       fmt.height = destHeight;
-      fmt.outFile = "test.mp4";
+      fmt.file = "test.mp4";
       aclrtGetCurrentContext(&fmt.context);
       I_LOG("[Encoder:Init] width={}, height={}, format={}, enType={}",
         fmt.width, fmt.height, fmt.format, fmt.enType);

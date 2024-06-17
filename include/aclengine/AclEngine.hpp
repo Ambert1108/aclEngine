@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.h"
+#include "core/Utils.hpp"
 #include "core/SafeQueue.hpp"
  
 #include "acl/acl.h"
@@ -23,9 +24,9 @@ extern "C" {
 #include <atomic>
 
 namespace acle {
-  class Decoder {
+  class Decoder23 {
   public:
-    Decoder(std::string streamName, int32_t devId, aclrtContext aclCtx) :
+    Decoder23(std::string streamName, int32_t devId, aclrtContext aclCtx) :
       aclLiteVideoProc(nullptr),
       streamName(streamName),
       deviceId(devId),
@@ -33,7 +34,7 @@ namespace acle {
       ACLLITE_LOG_INFO("[Decoder::Decoder] Decoder is create, streamName=%s, devId=%d", streamName.c_str(), devId);
     }
 
-    ~Decoder() {
+    ~Decoder23() {
       close();
     }
 
@@ -104,6 +105,358 @@ namespace acle {
     AclLiteVideoProc* aclLiteVideoProc;
   };
 
+  const int64_t kUsec = 1000000;
+  const uint32_t kDecodeFrameQueueSize = 256;
+  const int kDecodeQueueOpWait = 10000; // decode wait 10ms/frame
+  const int kFrameEnQueueRetryTimes = 1000; // max wait time for the frame to enter in queue
+  const int kQueueOpRetryTimes = 1000;
+  const int kOutputJamWait = 10000;
+  const int kInvalidTpye = -1;
+  const int kWaitDecodeFinishInterval = 1000;
+  const int kDefaultFps = 1;
+  const int kReadSlow = 5;
+  const uint32_t kVideoChannelMax310 = 32;
+  const uint32_t kVideoChannelMax310B = 128;
+  const uint32_t kVideoChannelMax310P = 256;
+
+  const int kNoFlag = 0; // no flag
+  const int kInvalidVideoIndex = -1; // invalid video index
+  const std::string kRtspTransport = "rtsp_transport"; // rtsp transport
+  const std::string kUdp = "udp"; // video format udp
+  const std::string kTcp = "tcp";
+  const std::string kBufferSize = "buffer_size"; // buffer size string
+  const std::string kMaxBufferSize = "10485760"; // maximum buffer size:10MB
+  const std::string kMaxDelayStr = "max_delay"; // maximum delay string
+  const std::string kMaxDelayValue = "100000000"; // maximum delay time:100s
+  const std::string kTimeoutStr = "stimeout"; // timeout string
+  const std::string kTimeoutValue = "5000000"; // timeout:5s
+  const std::string kPktSize = "pkt_size"; // ffmpeg pakect size string
+  const std::string kPktSizeValue = "10485760"; // ffmpeg packet size value:10MB
+  const std::string kReorderQueueSize = "reorder_queue_size"; // reorder queue size
+  const std::string kReorderQueueSizeValue = "0"; // reorder queue size value
+  const int kErrorBufferSize = 1024; // buffer size for error info
+  const uint32_t kDefaultStreamFps = 5;
+  const uint32_t kOneSecUs = 1000 * 1000;
+
+  class Decoder {
+  public:
+    Decoder(CodecFormat& fmt) : decodeCtx(fmt) {};
+
+    ~Decoder() {};
+
+    bool open() {
+      if (isVideoFile(decodeCtx.file)) {
+        if (!fileIsExist(decodeCtx.file)) {
+          E_LOG("[Decoder::open] file {} is not find", decodeCtx.file);
+          return true;
+        }
+
+        return initSource();
+      }
+    };
+
+    void close() {};
+
+    int readFrame(ImageData& data) {
+      return 0;
+    };
+
+  private:
+    bool fileIsExist(const std::string& path) {
+      std::ifstream file(path);
+      if (!file) return false;
+      return true;
+    }
+
+    bool isVideoFile(const std::string& str) {
+      std::regex regexVideoFile(RegexVideoFile.c_str());
+      return regex_match(str, regexVideoFile);
+    }
+
+    void setDictForRtsp(AVDictionary*& avdic) {
+      T_LOG("Set parameters for {}", decodeCtx.file);
+
+      av_dict_set(&avdic, kRtspTransport.c_str(), kTcp.c_str(), kNoFlag);
+      av_dict_set(&avdic, kBufferSize.c_str(), kMaxBufferSize.c_str(), kNoFlag);
+      av_dict_set(&avdic, kMaxDelayStr.c_str(), kMaxDelayValue.c_str(), kNoFlag);
+      av_dict_set(&avdic, kTimeoutStr.c_str(), kTimeoutValue.c_str(), kNoFlag);
+      av_dict_set(&avdic, kReorderQueueSize.c_str(),
+        kReorderQueueSizeValue.c_str(), kNoFlag);
+      av_dict_set(&avdic, kPktSize.c_str(), kPktSizeValue.c_str(), kNoFlag);
+      T_LOG("Set parameters for {} end", decodeCtx.file);
+    }
+
+    bool openVideo(AVFormatContext*& avFormatContext) {
+      bool ret = true;
+      AVDictionary* avdic = nullptr;
+
+      av_log_set_level(AV_LOG_DEBUG);
+
+      D_LOG("Open video {} ...", decodeCtx.file);
+      setDictForRtsp(avdic);
+      int openRet = avformat_open_input(&avFormatContext,
+        decodeCtx.file.c_str(), nullptr,
+        &avdic);
+      if (openRet < 0) { // check open video result
+        char buf_error[kErrorBufferSize];
+        av_strerror(openRet, buf_error, kErrorBufferSize);
+
+        E_LOG("Could not open video:{}, return:{}, error info:{}",
+          decodeCtx.file, openRet, buf_error);
+        ret = false;
+      }
+
+      if (avdic != nullptr) { // free AVDictionary
+        av_dict_free(&avdic);
+      }
+
+      return ret;
+    }
+
+    int getVideoIndex(AVFormatContext* avFormatContext) {
+      if (avFormatContext == nullptr) { // verify input pointer
+        return kInvalidVideoIndex;
+      }
+
+      // get video index in streams
+      for (uint32_t i = 0; i < avFormatContext->nb_streams; i++) {
+        if (avFormatContext->streams[i]->codecpar->codec_type
+          == AVMEDIA_TYPE_VIDEO) { // check is media type is video
+          return i;
+        }
+      }
+
+      return kInvalidVideoIndex;
+    }
+
+    AclLiteError getVideoInfo() {
+      avformat_network_init(); // init network
+      AVFormatContext* avFormatContext = avformat_alloc_context();
+      bool ret = openVideo(avFormatContext);
+      if (ret == false) {
+        E_LOG("Open %s failed", decodeCtx.file);
+        return ACLLITE_ERROR;
+      }
+
+      if (avformat_find_stream_info(avFormatContext, NULL) < 0) {
+        E_LOG("Get stream info of {} failed", decodeCtx.file);
+        return;
+      }
+
+      int videoIndex = getVideoIndex(avFormatContext);
+      if (videoIndex == kInvalidVideoIndex) { // check video index is valid
+        E_LOG("Video index is {}, current media stream has no "
+          "video info:{}",
+          kInvalidVideoIndex, decodeCtx.file);
+        avformat_close_input(&avFormatContext);
+        return;
+      }
+
+      AVStream* inStream = avFormatContext->streams[videoIndex];
+
+      decodeCtx.width = inStream->codecpar->width;
+      decodeCtx.height = inStream->codecpar->height;
+      decodeCtx.fps = 25;
+      if (inStream->avg_frame_rate.den) {
+        decodeCtx.fps = inStream->avg_frame_rate.num / inStream->avg_frame_rate.den;
+      }
+
+      int videoType_ = inStream->codecpar->codec_id;
+      int profile_ = inStream->codecpar->profile;
+
+      avformat_close_input(&avFormatContext);
+
+      I_LOG("Video %s, type %d, profile %d, width:%d, height:%d, fps:%d",
+        decodeCtx.file, videoType_, profile_, decodeCtx.width, decodeCtx.height, decodeCtx.fps);
+      return;
+    }
+
+    AclLiteError frameImageEnQueue(std::shared_ptr<AclFrame> frameData) {
+      for (int count = 0; count < kFrameEnQueueRetryTimes; count++) {
+        if (frameQueue.Push(frameData)) return ACLLITE_OK;
+        usleep(kDecodeQueueOpWait);
+      }
+      E_LOG("Video %s lost decoded image for queue full", decodeCtx.file);
+
+      return ACLLITE_ERROR_VDEC_QUEUE_FULL;
+    }
+
+    static void callback(acldvppStreamDesc* input, acldvppPicDesc* output, void* userData) {
+      Decoder* own = (Decoder*)userData;
+      if (!own->isWork.load()) {
+        return;
+      }
+      // Get decoded image parameters
+      std::shared_ptr<AclFrame> frame = std::make_shared<AclFrame>();
+      frame->format = acldvppGetPicDescFormat(output);
+      frame->width = acldvppGetPicDescWidth(output);
+      frame->height = acldvppGetPicDescHeight(output);
+      frame->alignWidth = acldvppGetPicDescWidthStride(output);
+      frame->alignHeight = acldvppGetPicDescHeightStride(output);
+      frame->size = acldvppGetPicDescSize(output);
+
+      void* vdecOutBufferDev = acldvppGetPicDescData(output);
+      frame->data = SHARED_PTR_DVPP_BUF(vdecOutBufferDev);
+
+      // Put the decoded image to queue for read
+      own->frameImageEnQueue(frame);
+      // Release resouce
+      aclError ret = acldvppDestroyPicDesc(output);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("fail to destroy pic desc, error %d", ret);
+      }
+
+      if (input != nullptr) {
+        void* inputBuf = acldvppGetStreamDescData(input);
+        if (inputBuf != nullptr) {
+          acldvppFree(inputBuf);
+        }
+        aclError ret = acldvppDestroyStreamDesc(input);
+        if (ret != ACL_SUCCESS) {
+          ACLLITE_LOG_ERROR("fail to destroy input stream desc");
+        }
+      }
+    }
+
+    static void* notifyCallbackFunc(void* arg) {
+      Decoder* own = (Decoder*)arg;
+      if (!own->decodeCtx.context) {
+        E_LOG("[Decoder::notifyCallbackFunc] notify use context can not be nullptr!");
+        return nullptr;
+      }
+      aclError ret = aclrtSetCurrentContext(own->decodeCtx.context);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Video decoder set context failed, error: %d", ret);
+      }
+
+      own->isWork.store(true);
+      while (own->isWork.load()) {
+        aclrtProcessReport(1);
+      }
+
+      ACLLITE_LOG_INFO("Vdec subscribe thread exit!");
+
+      return (void*)ACLLITE_OK;
+    }
+
+    AclLiteError createVdecChannel() {
+      vdecChannelDesc_ = aclvdecCreateChannelDesc();
+      if (vdecChannelDesc_ == nullptr) {
+        E_LOG("Create vdec channel desc failed");
+        return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
+      }
+
+      // 暂不设置通道id
+      //aclError ret = aclvdecSetChannelDescChannelId(vdecChannelDesc_,
+      //  channelId_);
+      //if (ret != ACL_SUCCESS) {
+      //  ACLLITE_LOG_ERROR("Set vdec channel id to %d failed, errorno:%d",
+      //    channelId_, ret);
+      //  return ACLLITE_ERROR_SET_VDEC_CHANNEL_ID;
+      //}
+
+      aclError ret = aclvdecSetChannelDescThreadId(vdecChannelDesc_, threadId_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set vdec channel thread id failed, errorno:{}", ret);
+        return ACLLITE_ERROR_SET_VDEC_CHANNEL_THREAD_ID;
+      }
+
+      // callback func
+      ret = aclvdecSetChannelDescCallback(vdecChannelDesc_, callback);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set vdec channel callback failed, errorno:{}", ret);
+        return ACLLITE_ERROR_SET_VDEC_CALLBACK;
+      }
+
+      ret = aclvdecSetChannelDescEnType(vdecChannelDesc_, H264_BASELINE_LEVEL);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set vdec channel entype failed, errorno:{}", ret);
+        return ACLLITE_ERROR_SET_VDEC_ENTYPE;
+      }
+
+      ret = aclvdecSetChannelDescOutPicFormat(vdecChannelDesc_, decodeCtx.format);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set vdec channel pic format failed, errorno:{}", ret);
+        return ACLLITE_ERROR_SET_VDEC_PIC_FORMAT;
+      }
+
+      // create vdec channel
+      ACLLITE_LOG_INFO("Start create vdec channel by desc...");
+      ret = aclvdecCreateChannel(vdecChannelDesc_);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("fail to create vdec channel");
+        return ACLLITE_ERROR_CREATE_VDEC_CHANNEL;
+      }
+      ACLLITE_LOG_INFO("Create vdec channel ok");
+
+      return ACLLITE_OK;
+    }
+
+    bool initSource() {
+      if (decodeCtx.context == nullptr) {
+        aclError aclRet = aclrtGetCurrentContext(&decodeCtx.context);
+        if ((aclRet != ACL_SUCCESS) || (decodeCtx.context == nullptr)) {
+          E_LOG("[Deocder::initSource] Get current acl context error:{}", aclRet);
+          return false;
+        }
+      }
+      // Get current run mode
+      aclError aclRet = aclrtGetRunMode(&decodeCtx.runMode);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[Deocder::initSource] acl get run mode failed");
+        return false;
+      }
+
+      aclRet = getVideoInfo();
+      if (aclRet != ACL_SUCCESS) {
+        return false;
+      }
+
+      aclError aclRet = aclrtCreateStream(&stream_);
+      if (aclRet != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Vdec create stream failed, errorno:%d", aclRet);
+        return ACLLITE_ERROR_CREATE_STREAM;
+      }
+      ACLLITE_LOG_INFO("Vdec create stream ok");
+
+      int ret = pthread_create(&threadId_, nullptr, notifyCallbackFunc, (void*)this);
+      if (ret) {
+        E_LOG("[Decoder::initResource] Create notify callback thread failed, errorCode={}", ret);
+        return ACLLITE_ERROR_CREATE_THREAD;
+      }
+      (void)aclrtSubscribeReport(static_cast<uint64_t>(threadId_), stream_);
+
+      ret = createVdecChannel();
+      if (ret != ACLLITE_OK) {
+        ACLLITE_LOG_ERROR("Create vdec channel failed");
+        return ret;
+      }
+
+      return ACLLITE_OK;
+    }
+
+    AclLiteError createInputStreamDesc(std::shared_ptr<AclFrame> frameData) {
+      return ACLLITE_OK;
+    }
+
+    AclLiteError createOutputPicDesc(size_t size) {
+      return ACLLITE_OK;
+    }
+
+    AclLiteError process(std::shared_ptr<FrameData> frameData, void* userData) {
+      return ACLLITE_OK;
+    }
+
+    CodecFormat decodeCtx;
+    pthread_t threadId_;
+    aclvdecChannelDesc* vdecChannelDesc_ = nullptr;
+    acldvppPicDesc* inputPicDesc_ = nullptr;
+    aclrtStream stream_ = nullptr;
+    SafeQueue<std::shared_ptr<AclFrame>> frameQueue{};
+    std::atomic<bool> isWork{ false };
+    bool needClose = false;
+  };
+
   class Encoder {
   public:
     Encoder(CodecFormat& fmt) : encodeCtx(fmt) { };
@@ -111,10 +464,10 @@ namespace acle {
     ~Encoder() { close(); }
 
     bool open() { 
-      if (!encodeCtx.outFile.empty()) {
-        outFp_ = fopen(encodeCtx.outFile.c_str(), "wb+");
+      if (!encodeCtx.file.empty()) {
+        outFp_ = fopen(encodeCtx.file.c_str(), "wb+");
         if (outFp_ == nullptr) {
-          E_LOG("[Encoder::open] Open file {} failed, error={}", encodeCtx.outFile, strerror(errno));
+          E_LOG("[Encoder::open] Open file {} failed, error={}", encodeCtx.file, strerror(errno));
           return ACLLITE_ERROR_OPEN_FILE;
         }
       }
@@ -221,13 +574,13 @@ namespace acle {
       AclLiteError atlRet = ACLLITE_OK;
       void* data = vencData;
       if (encodeCtx.runMode == ACL_HOST) {
-        data = CopyDataToHost(vencData, size, encodeCtx.runMode, MEMORY_NORMAL);
+        data = CopyDataToHost(vencData, size, encodeCtx.runMode, NORMAL);
       }
       size_t ret = fwrite(data, 1, size, outFp_);
       if (ret != size) {
         E_LOG("[Encoder::saveVencFile] Save venc file {} failed, need write {} bytes, "
           "but only write {} bytes, error: {}",
-          encodeCtx.outFile, size, ret, strerror(errno));
+          encodeCtx.file, size, ret, strerror(errno));
         atlRet = ACLLITE_ERROR_WRITE_FILE;
       }
       else {
@@ -249,11 +602,11 @@ namespace acle {
       else {
         void* data = acldvppGetStreamDescData(output);
         uint32_t size = acldvppGetStreamDescSize(output);
-        data = CopyDataToHost(data, size, ACL_HOST, MEMORY_NORMAL);
+        data = CopyDataToHost(data, size, ACL_HOST, NORMAL);
         AclPacket pkt;
         pkt.data = (uint8_t*)data;
         pkt.size = acldvppGetStreamDescSize(output);
-        pkt.timestamp = acldvppGetStreamDescTimestamp(output);
+        pkt.pts = acldvppGetStreamDescTimestamp(output);
         pkt.eos = acldvppGetStreamDescEos(output);
         
         Encoder* own = (Encoder*)user;
@@ -455,6 +808,422 @@ namespace acle {
     SafeQueue<AclPacket> pakcetQueue{};
     std::atomic<bool> isWork{ false };
     bool needClose = false;
+  };
+
+#define INBUF_SIZE 4096
+#define BUF_SIZE 1024 * 1024
+#define MTU 1300
+  class Demuxer {
+  public:
+    Demuxer(AVCodecContext* ctx) {
+      codecCtx = ctx;
+    };
+
+    ~Demuxer() {
+      close();
+    }
+
+    bool open(std::string file = "") {
+      if (!file.empty()) {
+        int err;
+        fmt_ctx = avformat_alloc_context();
+        if ((err = avformat_open_input(&fmt_ctx, file.c_str(), NULL, NULL)) < 0) {
+          throw std::runtime_error("ERROR: avformat_open_input error, open input file.");
+          close();
+          return err;
+        }
+
+        if ((err = avformat_find_stream_info(fmt_ctx, NULL)) < 0) {
+          throw std::runtime_error("ERROR: avformat_find_stream_info error, find stream information failed.");
+          close();
+          return err;
+        }
+
+        /* select the video stream */
+        err = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, 0, -1, &codec, 0);
+        if (err < 0) {
+          throw std::runtime_error("ERROR: av_find_best_stream error, find video stream failed.");
+          close();
+          return err;
+        }
+        video_stream_index = err;
+
+        /* create decoding context */
+        if (!(codecCtx = avcodec_alloc_context3(codec))) {
+          close();
+          return AVERROR(ENOMEM);
+        }
+
+        if (avcodec_parameters_to_context(codecCtx, fmt_ctx->streams[video_stream_index]->codecpar) < 0) {
+          throw std::runtime_error("ERROR: avcodec_parameters_to_context error, add codec param to codec failed.");
+        }
+
+        /* init the video decoder */
+        if ((err = avcodec_open2(codecCtx, codec, NULL)) < 0) {
+          throw std::runtime_error("ERROR: avcodec_open2 error, open video decoder failed.");
+          close();
+          return err;
+        }
+      }
+      else {
+        codec = avcodec_find_decoder_by_name("h264");
+        if (!codec) {
+          throw std::runtime_error("Codec not found");
+        }
+        codecCtx = avcodec_alloc_context3(codec);
+        if (!codecCtx) {
+          E_LOG("[Demuxer::open] codecCtx cannot be nullptr!");
+          return false;
+        }
+        buff = new uint8_t[BUF_SIZE];
+        parser = av_parser_init(AV_CODEC_ID_H264);
+        if (!parser) {
+          E_LOG("[Demuxer::open] use av_parser_init failed");
+          return false;
+        }
+      }
+
+      aclrtGetRunMode(&runMode);
+
+      return true;
+    }
+
+    bool close() {
+      if (parser) {
+        av_parser_close(parser);
+        parser = nullptr;
+      }
+      if (buff) {
+        delete[] buff;
+        buff = nullptr;
+      }
+      if (codecCtx) {
+        avcodec_free_context(&codecCtx);
+        codecCtx = nullptr;
+      }
+      if (fmt_ctx) {
+        avformat_close_input(&fmt_ctx);
+        fmt_ctx = nullptr;
+      }
+    }
+
+    int demux(AclPacket* packet) {
+      int err = 0;
+      AVPacket inPacket;
+      if ((err = av_read_frame(fmt_ctx, &inPacket)) < 0) {
+        if (err == AVERROR_EOF) {//如果读到文件尾，返回-3，下次调用重新从文件头开始读
+          D_LOG("WARNING: av_read_frame warn, no more frame to read.");
+          avformat_close_input(&fmt_ctx);
+          fmt_ctx = nullptr;
+          return -3;
+        }
+        else {
+          throw std::runtime_error("ERROR: av_read_frame error");
+          return -1;
+        }
+      }
+      if (inPacket.stream_index != video_stream_index) return -2;
+      void* buffer = CopyDataToDevice(inPacket.data, inPacket.size,
+        runMode, DVPP);
+      if (buffer == nullptr) {
+        ACLLITE_LOG_ERROR("Copy frame h26x data to dvpp failed");
+        return ACLLITE_ERROR_COPY_DATA;
+      }
+      packet->data = (uint8_t*)buffer;
+      packet->size = inPacket.size;
+      packet->pts = inPacket.pts;
+      av_packet_unref(&inPacket);
+      return 0;
+    }
+
+    int demux(const uint8_t* data, int len, int64_t timestamp, AclPacket* packet) {
+      frameIndex++;
+      uint8_t* h264Data = new uint8_t[BUF_SIZE];
+      uint8_t* tempData = new uint8_t[BUF_SIZE];
+      memcpy(tempData, data, len);
+
+      inputPayload(tempData, len, timestamp);
+      int64_t ts = 0;
+      int inputLen = getH264(h264Data, ts);
+      int count = 0;
+      int num = 0;
+      D_LOG("inputLen:{}", inputLen);
+      while (inputLen) {
+        int ret = av_parser_parse2(parser, codecCtx, &packet->data, &packet->size,
+          h264Data, inputLen, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        if (ret < 0) {
+          E_LOG("parser wrong");
+        }
+        count += ret;
+        inputLen -= ret;
+        packet->pts = ts;
+        if (packet->size) num++;
+      }
+      delete[] tempData;
+      tempData = nullptr;
+      if (h264Data) {
+        delete[] h264Data;
+        h264Data = nullptr;
+      }
+      return 0;
+    }
+
+    int getParserWidth() {
+      if (parser)
+        return parser->width;
+      else {
+        E_LOG("parser is NULL");
+        return -1;
+      }
+    }
+
+    int getParserHeight() {
+      if (parser)
+        return parser->height;
+      else {
+        E_LOG("parser is NULL");
+        return -1;
+      }
+    }
+
+  private:
+    void inputPayload(const uint8_t* data, int len, int64_t timestamp) {
+      D_LOG("timestamp:{}", timestamp);
+      uint8_t load_hdr = data[0];
+      uint8_t fu_ind = data[0];   //分片
+      uint8_t fu_hdr = data[1];   //分片
+      D_LOG("fu_hdr:{}", fu_hdr);
+
+      D_LOG("load_hdr:{}", load_hdr);
+      //聚合
+      if ((load_hdr & 0x1f) == 24) {
+        writePos = 0;
+        dataLen = len - 1;//去掉load_hdr
+        readPos = 1;
+
+        while (dataLen > 0) {
+          memcpy(&buff[writePos], &h264Startcode, 4);
+          writePos += 4;
+          uint16_t size = (data[readPos] << 8) | data[readPos + 1];
+          readPos += 2;
+          dataLen -= 2;
+          memcpy(&buff[writePos], &data[readPos], (size_t)size);
+          readPos += size;
+          writePos += size;
+          dataLen -= size;
+        }
+        outSize = writePos;
+        output_h264data.push(std::make_tuple(buff, outSize, timestamp));
+      }
+
+      //单个
+      else if ((load_hdr & 0x1f) > 0 && (load_hdr & 0x1f) < 24) {
+        readPos = 0;
+        writePos = 0;
+        memcpy(&buff[writePos], &h264Startcode, 4);
+        writePos += 4;
+        memcpy(&buff[writePos], &data[readPos], len);
+        writePos += len;
+        outSize = writePos;
+        output_h264data.push(std::make_tuple(buff, writePos, timestamp));
+      }
+
+      //分片
+      else if (((load_hdr & 0x1f) == 28) && len >= 2) {
+
+        dataLen = len - 2;
+        readPos = 2;
+
+        //S=1,nalu的开始
+        if (fu_hdr >> 7 == 1) {
+          uint8_t F = fu_ind & 0x80;
+          uint8_t NRI = fu_ind & 0x60;
+          uint8_t Type = fu_hdr & 0x1f;
+          uint8_t nalu_hdr = F | NRI | Type;
+          writePos = 0;
+          memcpy(&buff[writePos], &h264Startcode, 4);
+          writePos += 4;
+          memcpy(&buff[writePos], &nalu_hdr, 1);
+          writePos += 1;
+          memcpy(&buff[writePos], &data[readPos], dataLen);
+          writePos += dataLen;
+        }
+
+        //E=1,nalu的结束
+        else if ((fu_hdr >> 6) == 1) {
+          memcpy(&buff[writePos], &data[readPos], dataLen);
+          writePos += dataLen;
+          outSize = writePos;
+          output_h264data.push(std::make_tuple(buff, outSize, timestamp));
+        }
+
+        //S=E=0，中间
+        else if ((fu_hdr >> 5) == 0) {
+          memcpy(&buff[writePos], &data[readPos], dataLen);
+          writePos += dataLen;
+        }
+      }
+      D_LOG("output_h264data.size():{}", output_h264data.size());
+    }
+
+    int getH264(uint8_t* h264Data, int64_t& timestamp) {
+      if (output_h264data.empty()) return 0;
+      std::tuple<uint8_t*, size_t, int64_t> firstData = output_h264data.front();
+      memcpy(h264Data, std::get<0>(firstData), std::get<1>(firstData));
+      timestamp = std::get<2>(firstData);
+      output_h264data.pop();
+      return std::get<1>(firstData);
+    }
+
+    AVCodecParserContext* parser = nullptr;
+    AVCodec* codec = nullptr;
+    AVCodecContext* codecCtx = nullptr;
+    AVFormatContext* fmt_ctx = nullptr;
+    aclrtRunMode runMode;
+    int video_stream_index = 0;
+    int readPos = 0;   //rtp payLoad读的位置
+    int writePos = 0;  //h264data写的位置
+    int dataLen = 0;
+    uint32_t h264Startcode = 0x01000000;
+    uint8_t* buff = nullptr;
+    std::queue<std::tuple<uint8_t*, size_t, int64_t>> output_h264data;
+    size_t outSize = 0;
+    int frameIndex = 0;
+  };
+
+  class Muxer {
+  public:
+    Muxer() = default;
+    ~Muxer() {};
+
+    int mux(const uint8_t* rawData, const int& rawSize, std::queue<std::vector<uint8_t>>& inData) {
+      if (rawData != nullptr && rawSize) {
+        H264ToRtp(rawData, rawSize, inData);
+      }
+      else {
+        E_LOG("ERROR: encode pkt is nullptr.");
+        return -1;
+      }
+      return 0;
+    }
+  private:
+    void H264ToRtp(const uint8_t* rawData, const int& rawSize, std::queue<std::vector<uint8_t>>& outData) {
+      uint64_t frameCount = 0;
+      auto data = rawData;
+      auto pktSize = rawSize;
+      std::queue<std::vector<uint8_t>> outNalu;
+      int sp = -1;
+      int ep = -1;
+      int i = 0;
+      for (i = 0; i < pktSize; i++) {
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
+          ep = i - 1;
+          if (ep != -1) {
+            int nalu_len = ep - sp + 1;
+            std::vector<uint8_t> d;
+            for (int k = 0; k < nalu_len; k++, sp++) {
+              d.push_back(data[sp]);
+            }
+            outNalu.push(d);
+            d.clear();
+          }
+          sp = i;
+          i += 3;
+        }
+        else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+          ep = i - 1;
+          if (ep != -1) {
+            int nalu_len = ep - sp + 1;
+            std::vector<uint8_t> d;
+            for (int k = 0; k < nalu_len; k++, sp++) {
+              d.push_back(data[sp]);
+            }
+            outNalu.push(d);
+            d.clear();
+          }
+          sp = i;
+          i += 2;
+        }
+      }
+      int res_len = pktSize - sp;
+      if (res_len != 0) {
+        std::vector<uint8_t> d;
+        for (int k = 0; k < res_len; k++, sp++) {
+          d.push_back(data[sp]);
+        }
+        outNalu.push(d);
+        d.clear();
+      }
+      int nalu_size = outNalu.size();
+      for (int k = 0; k < nalu_size; k++) {
+        std::vector<uint8_t> nalu = outNalu.front();
+        if (nalu.size()) {
+          int startLen = 0;
+          uint32_t startCode = 0;
+          for (int i = 0; i < 4; ++i) {
+            startCode = (startCode << 8) | nalu[i];
+          }
+          if (startCode != 1) {
+            if ((startCode & 0x00000f00) == 0x00000100) {
+              startLen = 3;
+            }
+            else {
+              startLen = -1;
+              throw std::runtime_error("startCode error");
+            }
+          }
+          else {
+            startLen = 4;
+          }
+          if (nalu.size() - startLen <= MTU + 1) {
+            std::vector<uint8_t> buf(nalu.size() - startLen);
+            memcpy(&buf[0], &nalu[0] + startLen, nalu.size() - startLen);
+            outData.push(buf);
+            buf.clear();
+          }
+          else {
+            int index = startLen + 1;
+            bool isFirst = true;
+            uint8_t fuIndicator = 0xe0 & nalu[startLen];
+            fuIndicator |= 0x1c;
+            uint8_t fuHeader = 0x1f & nalu[startLen];
+            do {
+              std::vector<uint8_t> buf(MTU + 2);
+              if (isFirst) {
+                fuHeader |= 0x80;
+                isFirst = false;
+              }
+              else {
+                fuHeader &= 0x1f;
+              }
+              memset(&buf[0], 0, MTU + 2);
+              memcpy(&buf[0], &fuIndicator, 1);
+              memcpy(&buf[0] + 1, &fuHeader, 1);
+              memcpy(&buf[0] + 2, &nalu[0] + index, MTU);
+              outData.push(buf);
+              buf.clear();
+              index += MTU;
+            } while (index < nalu.size() - MTU);
+            std::vector<uint8_t> buff(nalu.size() - index + 2);
+            int ssize = nalu.size() - index + 2;
+            fuHeader &= 0x1f;
+            fuHeader |= 0x40;
+            memset(&buff[0], 0, ssize);
+            memcpy(&buff[0], &fuIndicator, 1);
+            memcpy(&buff[0] + 1, &fuHeader, 1);
+            memcpy(&buff[0] + 2, &nalu[0] + index, nalu.size() - index);
+            outData.push(buff);
+            buff.clear();
+          }
+          nalu.clear();
+          ++frameCount;
+        }
+        else {
+          E_LOG("input_pkt is empty");
+        }
+        outNalu.pop();
+      }
+    }
   };
 
   static std::unordered_map<std::string, acldvppChannelMode> STR2MODE = {

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.11)
 
 # project information
 project(simpleAscend)
-set(MODULE MINDX)
+set(MODULE NORMAL)
 if(${MODULE} MATCHES "NORMAL")
     # Compile options
     set(CMAKE_CXX_STANDARD 17)
@@ -16,8 +16,6 @@ if(${MODULE} MATCHES "NORMAL")
         add_compile_options(/w44251 /w44275)
     endif (MSVC)
     find_package(Threads REQUIRED)
-
-    add_definitions(-Dgoogle=mindxsdk_private)   
 
     # Specify target generation path
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY  "../out")
@@ -125,7 +123,7 @@ if(${MODULE} MATCHES "NORMAL")
         #${ACLE_DIR}/AclLiteModel.cpp 
     )
 
-    #add_subdirectory(samples/decandenc)
+    add_subdirectory(samples/decandenc)
     #add_subdirectory(samples/encode_test)
     #add_subdirectory(samples/venc/src)
     #add_subdirectory(samples/png)

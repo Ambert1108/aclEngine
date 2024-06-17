@@ -1,3 +1,9 @@
+// @brief: 线程安全队列
+// @copyright: Copyright seekloud 2024
+// @birth: [Ambert@2024.6.17]
+// @version: V0.0.1
+// @revision: [xxx@2024.6.17]
+
 #pragma once
 
 #include <mutex>

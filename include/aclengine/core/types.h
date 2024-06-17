@@ -1,13 +1,14 @@
 // @brief: aclengine数据类型定义
 // @copyright: Copyright seekloud 2024
 // @birth: [Ambert@2024.5.20]
-// @version: V0.0.1
-// @revision: [xxx@2024.5.20]
+// @version: V0.0.2
+// @revision: [xxx@2024.6.17]
 
 #pragma once
 
 #include <unistd.h>
 #include <string>
+#include <fstream>
 #include <memory>
 
 #include"seeker/logger.h"
@@ -16,9 +17,13 @@
 #include "acl/ops/acl_dvpp.h"
 
 namespace acle {
+  // regex for verify video file name
+  const std::string RegexVideoFile = "^.+\\.(mp4|h264|h265)$";
+
   struct CodecFormat {
     uint32_t width = 0;
     uint32_t height = 0;
+    uint32_t fps = 0;
     uint32_t maxBitrate = 2000;
 
     /* 关键帧间隔 <Ambert May-20-2024>*/
@@ -50,7 +55,7 @@ namespace acle {
     acldvppStreamFormat enType = H264_MAIN_LEVEL;
     aclrtContext context = nullptr;
     aclrtRunMode runMode = ACL_HOST;
-    std::string outFile;
+    std::string file;
   };
 
   struct PicDesc {
@@ -70,9 +75,7 @@ namespace acle {
     void* data = nullptr;
     uint32_t size = 0;
 
-    AclImage() {
-      I_LOG("AclImage()");
-    };
+    AclImage() { };
 
     AclImage(const AclImage& image) {
       format = image.format;
@@ -83,7 +86,6 @@ namespace acle {
       size = image.size;
       acldvppMalloc(&data, size);
       aclrtMemcpy(data, size, image.data, image.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
-      I_LOG("AclImage(const AclImage& image) noexcept");
     };
 
     AclImage(AclImage&& image) noexcept :
@@ -111,11 +113,9 @@ namespace acle {
       this->size = image.size;
       acldvppMalloc(&this->data, this->size);
       aclrtMemcpy(this->data, this->size, image.data, image.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
-      I_LOG("AclImage& operator=(const AclImage& image)");
       return *this;
     }
   };
-
 
   struct AclFrame {
     acldvppPixelFormat format;
@@ -125,12 +125,45 @@ namespace acle {
     uint32_t alignHeight = 0;
     uint32_t size = 0;
     std::shared_ptr<uint8_t> data = nullptr;
+    bool isFinished = false;
+
+    AclFrame() = default;
+
+    AclFrame(const AclFrame& img) {
+      this->format = img.format;
+      this->width = img.width;
+      this->height = img.height;
+      this->alignWidth = img.alignWidth;
+      this->alignHeight = img.alignHeight;
+      this->size = img.size;
+      this->data = img.data;
+    }
+
+    AclFrame(AclFrame&& img) {
+      this->format = std::move(img.format);
+      this->width = std::move(img.width);
+      this->height = std::move(img.height);
+      this->alignWidth = std::move(img.alignWidth);
+      this->alignHeight = std::move(img.alignHeight);
+      this->size = std::move(img.size);
+      this->data = std::move(img.data);
+    }
+
+    AclFrame& operator=(const AclFrame& img) {
+      this->format = img.format;
+      this->width = img.width;
+      this->height = img.height;
+      this->alignWidth = img.alignWidth;
+      this->alignHeight = img.alignHeight;
+      this->size = img.size;
+      this->data = img.data;
+    }
   };
 
   struct AclPacket {
     uint8_t* data;
-    uint32_t size;
-    uint64_t timestamp;
+    int32_t size;
+    uint64_t pts;
 
     /* 1:true, 0:false */
     uint8_t eos;
@@ -150,6 +183,11 @@ namespace acle {
         data = nullptr;
       }
     };
+  };
+
+  struct Resolution {
+    uint32_t width = 0;
+    uint32_t height = 0;
   };
 
 /**
@@ -204,10 +242,4 @@ namespace acle {
 * @return shared pointer of input buffer
 */
 #define SHARED_PTR_DEV_BUF(buf) (std::shared_ptr<uint8_t>((uint8_t *)(buf), [](uint8_t* p) { aclrtFree(p); }))
-
-
-  struct Resolution {
-    uint32_t width = 0;
-    uint32_t height = 0;
-  };
 }
