@@ -105,205 +105,180 @@ namespace acle {
     AclLiteVideoProc* aclLiteVideoProc;
   };
 
-  const int64_t kUsec = 1000000;
-  const uint32_t kDecodeFrameQueueSize = 256;
-  const int kDecodeQueueOpWait = 10000; // decode wait 10ms/frame
-  const int kFrameEnQueueRetryTimes = 1000; // max wait time for the frame to enter in queue
-  const int kQueueOpRetryTimes = 1000;
-  const int kOutputJamWait = 10000;
-  const int kInvalidTpye = -1;
-  const int kWaitDecodeFinishInterval = 1000;
-  const int kDefaultFps = 1;
-  const int kReadSlow = 5;
-  const uint32_t kVideoChannelMax310 = 32;
-  const uint32_t kVideoChannelMax310B = 128;
-  const uint32_t kVideoChannelMax310P = 256;
+#define INVALID_CHANNEL_ID (-1)
+#define VIDEO_CHANNEL_MAX  (256)
+  class ChannelIdGenerator {
+  public:
+    ChannelIdGenerator()
+    {
+      for (int i = 0; i < VIDEO_CHANNEL_MAX; i++) {
+        channelId_[i] = INVALID_CHANNEL_ID;
+      }
+    }
+    ~ChannelIdGenerator() {};
 
-  const int kNoFlag = 0; // no flag
-  const int kInvalidVideoIndex = -1; // invalid video index
-  const std::string kRtspTransport = "rtsp_transport"; // rtsp transport
-  const std::string kUdp = "udp"; // video format udp
-  const std::string kTcp = "tcp";
-  const std::string kBufferSize = "buffer_size"; // buffer size string
-  const std::string kMaxBufferSize = "10485760"; // maximum buffer size:10MB
-  const std::string kMaxDelayStr = "max_delay"; // maximum delay string
-  const std::string kMaxDelayValue = "100000000"; // maximum delay time:100s
-  const std::string kTimeoutStr = "stimeout"; // timeout string
-  const std::string kTimeoutValue = "5000000"; // timeout:5s
-  const std::string kPktSize = "pkt_size"; // ffmpeg pakect size string
-  const std::string kPktSizeValue = "10485760"; // ffmpeg packet size value:10MB
-  const std::string kReorderQueueSize = "reorder_queue_size"; // reorder queue size
-  const std::string kReorderQueueSizeValue = "0"; // reorder queue size value
-  const int kErrorBufferSize = 1024; // buffer size for error info
-  const uint32_t kDefaultStreamFps = 5;
-  const uint32_t kOneSecUs = 1000 * 1000;
+    int GenerateChannelId(void)
+    {
+      std::lock_guard<std::mutex> lock(mutex_lock_);
+      for (int i = 0; i < VIDEO_CHANNEL_MAX; i++) {
+        if (channelId_[i] == INVALID_CHANNEL_ID) {
+          channelId_[i] = i;
+          return i;
+        }
+      }
+
+      return INVALID_CHANNEL_ID;
+    }
+
+    void ReleaseChannelId(int channelId)
+    {
+      std::lock_guard<std::mutex> lock(mutex_lock_);
+      if ((channelId >= 0) && (channelId < VIDEO_CHANNEL_MAX)) {
+        channelId_[channelId] = INVALID_CHANNEL_ID;
+      }
+    }
+
+  private:
+    int channelId_[VIDEO_CHANNEL_MAX];
+    mutable std::mutex mutex_lock_;
+  };
+  ChannelIdGenerator channelIdGenerator{};
 
   class Decoder {
   public:
     Decoder(CodecFormat& fmt) : decodeCtx(fmt) {};
 
-    ~Decoder() {};
+    ~Decoder() { close(); };
 
     bool open() {
-      if (isVideoFile(decodeCtx.file)) {
-        if (!fileIsExist(decodeCtx.file)) {
-          E_LOG("[Decoder::open] file {} is not find", decodeCtx.file);
-          return true;
-        }
+      //if (isVideoFile(decodeCtx.file)) {
+      //  if (!fileIsExist(decodeCtx.file)) {
+      //    E_LOG("[Decoder::open] file {} is not find", decodeCtx.file);
+      //    return false;
+      //  }
+      //
+      //  return initSource();
+      //}
+      alignWidth_ = ALIGN_UP16(decodeCtx.width);
+      alignHeight_ = ALIGN_UP2(decodeCtx.height);
+      outputPicSize_ = YUV420SP_SIZE(alignWidth_, alignHeight_);
 
-        return initSource();
+      channelId_ = channelIdGenerator.GenerateChannelId();
+      if (channelId_ == INVALID_CHANNEL_ID || channelId_ >= VIDEO_CHANNEL_MAX) {
+        E_LOG("[Decoder::open] Decoder number excessive {}", VIDEO_CHANNEL_MAX);
+        return false;
       }
+
+      return initSource();
     };
 
-    void close() {};
+    void close() {
+      if (!needClose) return;
 
-    int readFrame(ImageData& data) {
+      aclError ret;
+      if (inputStreamDesc_ != nullptr) {
+        void* inputBuf = acldvppGetStreamDescData(inputStreamDesc_);
+        if (inputBuf != nullptr) {
+          acldvppFree(inputBuf);
+        }
+        aclError ret = acldvppDestroyStreamDesc(inputStreamDesc_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("fail to destroy input stream desc");
+        }
+        inputStreamDesc_ = nullptr;
+      }
+
+      if (outputPicDesc_ != nullptr) {
+        void* outputBuf = acldvppGetPicDescData(outputPicDesc_);
+        if (outputBuf != nullptr) {
+          acldvppFree(outputBuf);
+        }
+        aclError ret = acldvppDestroyPicDesc(outputPicDesc_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("fail to destroy output pic desc");
+        }
+        outputPicDesc_ = nullptr;
+      }
+
+      if (vdecChannelDesc_ != nullptr) {
+        ret = aclvdecDestroyChannel(vdecChannelDesc_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("Vdec destroy channel failed, errorno: %d", ret);
+        }
+        aclvdecDestroyChannelDesc(vdecChannelDesc_);
+        vdecChannelDesc_ = nullptr;
+      }
+
+      unsubscribReportThread();
+
+      while (!frameQueue.Empty()) {
+        AclFrame frame = frameQueue.Pop();
+        if (frame.data != nullptr) {
+          acldvppFree(frame.data.get());
+          frame.data = nullptr;
+        }
+      }
+
+      channelIdGenerator.ReleaseChannelId(channelId_);
+      needClose = false;
+      I_LOG("[AclEngine::Decoder] Decoder is closed");
+    }
+
+    int readFrame(const AclPacket& packet, AclFrame& frame) {
+      aclError ret = createInputStreamDesc(packet);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[Decoder::readFrame] create input stream description failed, error:{}", ret);
+        return -1;
+      }
+
+      ret = createOutputPicDesc(outputPicSize_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[Decoder::readFrame] create input stream description failed, error:{}", ret);
+        return -1;
+      }
+
+      ret = aclvdecSendFrame(vdecChannelDesc_, inputStreamDesc_,
+        outputPicDesc_, nullptr, (void*)this);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("[Decoder::readFrame] Send frame to vdec failed, errorno:{}", ret);
+        return -1;
+      }
+
+      if (frameQueue.Empty()) {
+        W_LOG("[Decoder::readFrame] get frame failed, wait decode process");
+        return 1;
+      }
+      frame = frameQueue.Pop();
+
       return 0;
-    };
+    }
 
   private:
-    bool fileIsExist(const std::string& path) {
-      std::ifstream file(path);
-      if (!file) return false;
-      return true;
-    }
-
-    bool isVideoFile(const std::string& str) {
-      std::regex regexVideoFile(RegexVideoFile.c_str());
-      return regex_match(str, regexVideoFile);
-    }
-
-    void setDictForRtsp(AVDictionary*& avdic) {
-      T_LOG("Set parameters for {}", decodeCtx.file);
-
-      av_dict_set(&avdic, kRtspTransport.c_str(), kTcp.c_str(), kNoFlag);
-      av_dict_set(&avdic, kBufferSize.c_str(), kMaxBufferSize.c_str(), kNoFlag);
-      av_dict_set(&avdic, kMaxDelayStr.c_str(), kMaxDelayValue.c_str(), kNoFlag);
-      av_dict_set(&avdic, kTimeoutStr.c_str(), kTimeoutValue.c_str(), kNoFlag);
-      av_dict_set(&avdic, kReorderQueueSize.c_str(),
-        kReorderQueueSizeValue.c_str(), kNoFlag);
-      av_dict_set(&avdic, kPktSize.c_str(), kPktSizeValue.c_str(), kNoFlag);
-      T_LOG("Set parameters for {} end", decodeCtx.file);
-    }
-
-    bool openVideo(AVFormatContext*& avFormatContext) {
-      bool ret = true;
-      AVDictionary* avdic = nullptr;
-
-      av_log_set_level(AV_LOG_DEBUG);
-
-      D_LOG("Open video {} ...", decodeCtx.file);
-      setDictForRtsp(avdic);
-      int openRet = avformat_open_input(&avFormatContext,
-        decodeCtx.file.c_str(), nullptr,
-        &avdic);
-      if (openRet < 0) { // check open video result
-        char buf_error[kErrorBufferSize];
-        av_strerror(openRet, buf_error, kErrorBufferSize);
-
-        E_LOG("Could not open video:{}, return:{}, error info:{}",
-          decodeCtx.file, openRet, buf_error);
-        ret = false;
-      }
-
-      if (avdic != nullptr) { // free AVDictionary
-        av_dict_free(&avdic);
-      }
-
-      return ret;
-    }
-
-    int getVideoIndex(AVFormatContext* avFormatContext) {
-      if (avFormatContext == nullptr) { // verify input pointer
-        return kInvalidVideoIndex;
-      }
-
-      // get video index in streams
-      for (uint32_t i = 0; i < avFormatContext->nb_streams; i++) {
-        if (avFormatContext->streams[i]->codecpar->codec_type
-          == AVMEDIA_TYPE_VIDEO) { // check is media type is video
-          return i;
-        }
-      }
-
-      return kInvalidVideoIndex;
-    }
-
-    AclLiteError getVideoInfo() {
-      avformat_network_init(); // init network
-      AVFormatContext* avFormatContext = avformat_alloc_context();
-      bool ret = openVideo(avFormatContext);
-      if (ret == false) {
-        E_LOG("Open %s failed", decodeCtx.file);
-        return ACLLITE_ERROR;
-      }
-
-      if (avformat_find_stream_info(avFormatContext, NULL) < 0) {
-        E_LOG("Get stream info of {} failed", decodeCtx.file);
-        return;
-      }
-
-      int videoIndex = getVideoIndex(avFormatContext);
-      if (videoIndex == kInvalidVideoIndex) { // check video index is valid
-        E_LOG("Video index is {}, current media stream has no "
-          "video info:{}",
-          kInvalidVideoIndex, decodeCtx.file);
-        avformat_close_input(&avFormatContext);
-        return;
-      }
-
-      AVStream* inStream = avFormatContext->streams[videoIndex];
-
-      decodeCtx.width = inStream->codecpar->width;
-      decodeCtx.height = inStream->codecpar->height;
-      decodeCtx.fps = 25;
-      if (inStream->avg_frame_rate.den) {
-        decodeCtx.fps = inStream->avg_frame_rate.num / inStream->avg_frame_rate.den;
-      }
-
-      int videoType_ = inStream->codecpar->codec_id;
-      int profile_ = inStream->codecpar->profile;
-
-      avformat_close_input(&avFormatContext);
-
-      I_LOG("Video %s, type %d, profile %d, width:%d, height:%d, fps:%d",
-        decodeCtx.file, videoType_, profile_, decodeCtx.width, decodeCtx.height, decodeCtx.fps);
-      return;
-    }
-
-    AclLiteError frameImageEnQueue(std::shared_ptr<AclFrame> frameData) {
-      for (int count = 0; count < kFrameEnQueueRetryTimes; count++) {
-        if (frameQueue.Push(frameData)) return ACLLITE_OK;
-        usleep(kDecodeQueueOpWait);
-      }
-      E_LOG("Video %s lost decoded image for queue full", decodeCtx.file);
-
-      return ACLLITE_ERROR_VDEC_QUEUE_FULL;
-    }
-
     static void callback(acldvppStreamDesc* input, acldvppPicDesc* output, void* userData) {
       Decoder* own = (Decoder*)userData;
-      if (!own->isWork.load()) {
-        return;
+      if (own->isWork.load()) {
+        uint32_t retCode = acldvppGetStreamDescRetCode(input);
+        if (retCode != 0) {
+          E_LOG("[Decoder::callback] get decode out data failed");
+        }
+        // Get decoded image parameters
+        AclFrame frame;
+        frame.format = acldvppGetPicDescFormat(output);
+        frame.width = acldvppGetPicDescWidth(output);
+        frame.height = acldvppGetPicDescHeight(output);
+        frame.alignWidth = acldvppGetPicDescWidthStride(output);
+        frame.alignHeight = acldvppGetPicDescHeightStride(output);
+        frame.size = acldvppGetPicDescSize(output);
+
+        void* vdecOutBufferDev = acldvppGetPicDescData(output);
+        frame.data = SHARED_PTR_DVPP_BUF(vdecOutBufferDev);
+        own->frameQueue.Push(frame);
       }
-      // Get decoded image parameters
-      std::shared_ptr<AclFrame> frame = std::make_shared<AclFrame>();
-      frame->format = acldvppGetPicDescFormat(output);
-      frame->width = acldvppGetPicDescWidth(output);
-      frame->height = acldvppGetPicDescHeight(output);
-      frame->alignWidth = acldvppGetPicDescWidthStride(output);
-      frame->alignHeight = acldvppGetPicDescHeightStride(output);
-      frame->size = acldvppGetPicDescSize(output);
 
-      void* vdecOutBufferDev = acldvppGetPicDescData(output);
-      frame->data = SHARED_PTR_DVPP_BUF(vdecOutBufferDev);
-
-      // Put the decoded image to queue for read
-      own->frameImageEnQueue(frame);
       // Release resouce
       aclError ret = acldvppDestroyPicDesc(output);
       if (ret != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("fail to destroy pic desc, error %d", ret);
+        E_LOG("fail to destroy pic desc, error {}", ret);
       }
 
       if (input != nullptr) {
@@ -313,7 +288,7 @@ namespace acle {
         }
         aclError ret = acldvppDestroyStreamDesc(input);
         if (ret != ACL_SUCCESS) {
-          ACLLITE_LOG_ERROR("fail to destroy input stream desc");
+          E_LOG("fail to destroy input stream desc");
         }
       }
     }
@@ -326,15 +301,15 @@ namespace acle {
       }
       aclError ret = aclrtSetCurrentContext(own->decodeCtx.context);
       if (ret != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("Video decoder set context failed, error: %d", ret);
+        E_LOG("Video decoder set context failed, error:{}", ret);
       }
 
       own->isWork.store(true);
       while (own->isWork.load()) {
-        aclrtProcessReport(1);
+        aclrtProcessReport(500);
       }
 
-      ACLLITE_LOG_INFO("Vdec subscribe thread exit!");
+      D_LOG("Vdec subscribe thread exit!");
 
       return (void*)ACLLITE_OK;
     }
@@ -346,48 +321,46 @@ namespace acle {
         return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
       }
 
-      // 暂不设置通道id
-      //aclError ret = aclvdecSetChannelDescChannelId(vdecChannelDesc_,
-      //  channelId_);
-      //if (ret != ACL_SUCCESS) {
-      //  ACLLITE_LOG_ERROR("Set vdec channel id to %d failed, errorno:%d",
-      //    channelId_, ret);
-      //  return ACLLITE_ERROR_SET_VDEC_CHANNEL_ID;
-      //}
-
-      aclError ret = aclvdecSetChannelDescThreadId(vdecChannelDesc_, threadId_);
+      // 设置通道id
+      aclError ret = aclvdecSetChannelDescChannelId(vdecChannelDesc_,
+        channelId_);
       if (ret != ACL_SUCCESS) {
-        E_LOG("Set vdec channel thread id failed, errorno:{}", ret);
+        E_LOG("Set vdec channel id to {} failed, error:{}",
+          channelId_, ret);
+        return ACLLITE_ERROR_SET_VDEC_CHANNEL_ID;
+      }
+
+      ret = aclvdecSetChannelDescThreadId(vdecChannelDesc_, threadId_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set vdec channel thread id failed, error:{}", ret);
         return ACLLITE_ERROR_SET_VDEC_CHANNEL_THREAD_ID;
       }
 
       // callback func
       ret = aclvdecSetChannelDescCallback(vdecChannelDesc_, callback);
       if (ret != ACL_SUCCESS) {
-        E_LOG("Set vdec channel callback failed, errorno:{}", ret);
+        E_LOG("Set vdec channel callback failed, error:{}", ret);
         return ACLLITE_ERROR_SET_VDEC_CALLBACK;
       }
 
       ret = aclvdecSetChannelDescEnType(vdecChannelDesc_, H264_BASELINE_LEVEL);
       if (ret != ACL_SUCCESS) {
-        E_LOG("Set vdec channel entype failed, errorno:{}", ret);
+        E_LOG("Set vdec channel entype failed, error:{}", ret);
         return ACLLITE_ERROR_SET_VDEC_ENTYPE;
       }
 
       ret = aclvdecSetChannelDescOutPicFormat(vdecChannelDesc_, decodeCtx.format);
       if (ret != ACL_SUCCESS) {
-        E_LOG("Set vdec channel pic format failed, errorno:{}", ret);
+        E_LOG("Set vdec channel pic format failed, error:{}", ret);
         return ACLLITE_ERROR_SET_VDEC_PIC_FORMAT;
       }
 
       // create vdec channel
-      ACLLITE_LOG_INFO("Start create vdec channel by desc...");
       ret = aclvdecCreateChannel(vdecChannelDesc_);
       if (ret != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("fail to create vdec channel");
+        E_LOG("fail to create vdec channel, error:{}", ret);
         return ACLLITE_ERROR_CREATE_VDEC_CHANNEL;
       }
-      ACLLITE_LOG_INFO("Create vdec channel ok");
 
       return ACLLITE_OK;
     }
@@ -407,54 +380,165 @@ namespace acle {
         return false;
       }
 
-      aclRet = getVideoInfo();
-      if (aclRet != ACL_SUCCESS) {
-        return false;
-      }
-
-      aclError aclRet = aclrtCreateStream(&stream_);
-      if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("Vdec create stream failed, errorno:%d", aclRet);
-        return ACLLITE_ERROR_CREATE_STREAM;
-      }
-      ACLLITE_LOG_INFO("Vdec create stream ok");
-
       int ret = pthread_create(&threadId_, nullptr, notifyCallbackFunc, (void*)this);
       if (ret) {
         E_LOG("[Decoder::initResource] Create notify callback thread failed, errorCode={}", ret);
-        return ACLLITE_ERROR_CREATE_THREAD;
+        return false;
       }
-      (void)aclrtSubscribeReport(static_cast<uint64_t>(threadId_), stream_);
+
+      //aclRet = aclrtCreateStream(&stream_);
+      //if (aclRet != ACL_SUCCESS) {
+      //  E_LOG("[Decoder::initResource] Vdec create stream failed, errorno:{}", aclRet);
+      //  return false;
+      //}
+      //(void)aclrtSubscribeReport(static_cast<uint64_t>(threadId_), stream_);
 
       ret = createVdecChannel();
       if (ret != ACLLITE_OK) {
-        ACLLITE_LOG_ERROR("Create vdec channel failed");
-        return ret;
+        E_LOG("Create vdec channel failed");
+        return false;
       }
 
-      return ACLLITE_OK;
+      return true;
     }
 
-    AclLiteError createInputStreamDesc(std::shared_ptr<AclFrame> frameData) {
+    AclLiteError createInputStreamDesc(const AclPacket& input) {
+      inputStreamDesc_ = acldvppCreateStreamDesc();
+      if (inputStreamDesc_ == nullptr) {
+        E_LOG("Create input stream desc failed");
+        return ACLLITE_ERROR_CREATE_STREAM_DESC;
+      }
+
+      aclError ret;
+      // to the last data,send an endding signal to dvpp vdec
+      //if (frameData->isFinished) {
+      //  ret = acldvppSetStreamDescEos(inputStreamDesc_, 1);
+      //  if (ret != ACL_SUCCESS) {
+      //    ACLLITE_LOG_ERROR("Set EOS to input stream desc failed, errorno:%d", ret);
+      //    return ACLLITE_ERROR_SET_STREAM_DESC_EOS;
+      //  }
+      //  return ACLLITE_OK;
+      //}
+
+      ret = acldvppSetStreamDescData(inputStreamDesc_, (void*)input.data);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set input stream data failed, errorno:{}", ret);
+        return ACLLITE_ERROR_SET_STREAM_DESC_DATA;
+      }
+
+      // set size for dvpp stream desc
+      ret = acldvppSetStreamDescSize(inputStreamDesc_, input.size);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Set input stream size failed, errorno:{}", ret);
+        return ACLLITE_ERROR_SET_STREAM_DESC_SIZE;
+      }
+
+      acldvppSetStreamDescTimestamp(inputStreamDesc_, input.pts);
+
       return ACLLITE_OK;
     }
 
     AclLiteError createOutputPicDesc(size_t size) {
+      aclError ret = acldvppMalloc(&outputPicBuf_, size);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Malloc vdec output buffer failed when create "
+          "vdec output desc, errorno:%d", ret);
+        return ACLLITE_ERROR_MALLOC_DVPP;
+      }
+
+      outputPicDesc_ = acldvppCreatePicDesc();
+      if (outputPicDesc_ == nullptr) {
+        ACLLITE_LOG_ERROR("Create vdec output pic desc failed");
+        return ACLLITE_ERROR_CREATE_PIC_DESC;
+      }
+
+      ret = acldvppSetPicDescData(outputPicDesc_, outputPicBuf_);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic desc data failed, errorno:%d", ret);
+        return ACLLITE_ERROR_SET_PIC_DESC_DATA;
+      }
+
+      ret = acldvppSetPicDescSize(outputPicDesc_, size);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic size failed, errorno:%d", ret);
+        return ACLLITE_ERROR_SET_PIC_DESC_SIZE;
+      }
+
+      ret = acldvppSetPicDescWidth(outputPicDesc_, decodeCtx.width);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic width failed, errorno:%d", ret);
+        return ACLLITE_ERROR_VDEC_SET_WIDTH;
+      }
+
+      ret = acldvppSetPicDescHeight(outputPicDesc_, decodeCtx.height);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic height failed, errorno:%d", ret);
+        return ACLLITE_ERROR_VDEC_SET_HEIGHT;
+      }
+
+      ret = acldvppSetPicDescWidthStride(outputPicDesc_, alignWidth_);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic widthStride failed, errorno:%d", ret);
+        return ACLLITE_ERROR;
+      }
+
+      ret = acldvppSetPicDescHeightStride(outputPicDesc_, alignHeight_);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic heightStride failed, errorno:%d", ret);
+        return ACLLITE_ERROR;
+      }
+
+      ret = acldvppSetPicDescFormat(outputPicDesc_, decodeCtx.format);
+      if (ret != ACL_SUCCESS) {
+        ACLLITE_LOG_ERROR("Set vdec output pic format failed, errorno:%d", ret);
+        return ACLLITE_ERROR_SET_PIC_DESC_FORMAT;
+      }
+
+      return ACLLITE_OK;
       return ACLLITE_OK;
     }
 
-    AclLiteError process(std::shared_ptr<FrameData> frameData, void* userData) {
-      return ACLLITE_OK;
+    void unsubscribReportThread() {
+      if ((threadId_ == 0) || (stream_ == nullptr)) return;
+      if (isWork.load()) isWork.store(false);
+
+      //(void)aclrtUnSubscribeReport(static_cast<uint64_t>(threadId_), stream_);
+      //if (stream_ != nullptr) {
+      //  aclError ret = aclrtDestroyStream(stream_);
+      //  if (ret != ACL_SUCCESS) {
+      //    E_LOG("Vdec destroy stream failed");
+      //  }
+      //  stream_ = nullptr;
+      //}
+
+      void* res = nullptr;
+      int joinThreadErr = pthread_join(threadId_, &res);
+      if (joinThreadErr) {
+        E_LOG("Join thread failed, threadId={}, err={}",
+          threadId_, joinThreadErr);
+      }
+      else {
+        if ((uint64_t)res != 0) {
+          E_LOG("thread run failed. ret is {}.", (uint64_t)res);
+        }
+      }
+      I_LOG("Destory report thread success.");
     }
 
     CodecFormat decodeCtx;
     pthread_t threadId_;
     aclvdecChannelDesc* vdecChannelDesc_ = nullptr;
-    acldvppPicDesc* inputPicDesc_ = nullptr;
+    acldvppStreamDesc* inputStreamDesc_ = nullptr;
+    acldvppPicDesc* outputPicDesc_ = nullptr;
+    void* outputPicBuf_ = nullptr;
+    int outputPicSize_ = 0;
+    int alignWidth_ = 0;
+    int alignHeight_ = 0;
     aclrtStream stream_ = nullptr;
-    SafeQueue<std::shared_ptr<AclFrame>> frameQueue{};
+    SafeQueue<AclFrame> frameQueue{};
+    int channelId_ = 0;
     std::atomic<bool> isWork{ false };
-    bool needClose = false;
+    bool needClose = true;
   };
 
   class Encoder {
@@ -545,10 +629,10 @@ namespace acle {
       I_LOG("[AclEngine::Encoder] Encoder is closed");
     }
 
-    int writeFrame(const ImageData& input, AclPacket& packet) {
+    int writeFrame(const AclFrame& input, AclPacket& packet) {
       AclLiteError ret = createInputPicDesc(input);
       if (ret != ACLLITE_OK) {
-        E_LOG("[Encoder::process] fail to create picture description");
+        E_LOG("[Encoder::writeFrame] fail to create picture description");
         return -1;
       }
 
@@ -557,12 +641,12 @@ namespace acle {
       ret = aclvencSendFrame(vencChannelDesc_, inputPicDesc_,
         static_cast<void*>(outputStreamDesc), vencFrameConfig_, (void*)this);
       if (ret != ACL_SUCCESS) {
-        E_LOG("[Encoder::process] encode frame failed, errorCode={}", ret);
+        E_LOG("[Encoder::writeFrame] encode frame failed, errorCode={}", ret);
         return -1;
       }
 
       if (pakcetQueue.Empty()) {
-        W_LOG("[Encoder::process] get packet failed, wait encode process");
+        W_LOG("[Encoder::writeFrame] get packet failed, wait encode process");
         return 1;
       }
       packet = pakcetQueue.Pop();
@@ -688,7 +772,7 @@ namespace acle {
       return ACLLITE_OK;
     }
 
-    AclLiteError createInputPicDesc(const ImageData& image) {
+    AclLiteError createInputPicDesc(const AclFrame& frame) {
       if (inputPicDesc_) {
         void* data = acldvppGetPicDescData(inputPicDesc_);
         if (data) {
@@ -704,33 +788,33 @@ namespace acle {
         return ACLLITE_ERROR_CREATE_PIC_DESC;
       }
       void* inBufferDev_ = nullptr;
-      uint32_t inBufferSize_ = image.size;
+      uint32_t inBufferSize_ = frame.size;
       auto aclRet = acldvppMalloc(&inBufferDev_, inBufferSize_);
       if (encodeCtx.runMode != ACL_DEVICE) {
-        aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, image.data.get(), image.size, ACL_MEMCPY_HOST_TO_DEVICE);
+        aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, frame.data.get(), frame.size, ACL_MEMCPY_HOST_TO_DEVICE);
         if (aclRet != ACL_SUCCESS) {
-          E_LOG("[Encoder::createInputPicDesc] acl memcpy data to dev failed, image.size={}, ret={}", image.size, aclRet);
+          E_LOG("[Encoder::createInputPicDesc] acl memcpy data to dev failed, image.size={}, ret={}", frame.size, aclRet);
           (void)acldvppFree(inBufferDev_);
           inBufferDev_ = nullptr;
           return false;
         }
       }
       else {
-        aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, image.data.get(), image.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
+        aclRet = aclrtMemcpy(inBufferDev_, inBufferSize_, frame.data.get(), frame.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
         if (aclRet != ACL_SUCCESS) {
-          E_LOG("[Encoder::createInputPicDesc] acl memcpy data to dev failed, image.size={}, ret={}", image.size, aclRet);
+          E_LOG("[Encoder::createInputPicDesc] acl memcpy data to dev failed, image.size={}, ret={}", frame.size, aclRet);
           (void)acldvppFree(inBufferDev_);
           inBufferDev_ = nullptr;
           return false;
         }
       }
       acldvppSetPicDescFormat(inputPicDesc_, encodeCtx.format);
-      acldvppSetPicDescWidth(inputPicDesc_, image.width);
-      acldvppSetPicDescHeight(inputPicDesc_, image.height);
-      acldvppSetPicDescWidthStride(inputPicDesc_, ALIGN_UP16(image.width));
-      acldvppSetPicDescHeightStride(inputPicDesc_, ALIGN_UP2(image.height));
+      acldvppSetPicDescWidth(inputPicDesc_, frame.width);
+      acldvppSetPicDescHeight(inputPicDesc_, frame.height);
+      acldvppSetPicDescWidthStride(inputPicDesc_, ALIGN_UP16(frame.width));
+      acldvppSetPicDescHeightStride(inputPicDesc_, ALIGN_UP2(frame.height));
       acldvppSetPicDescData(inputPicDesc_, inBufferDev_);
-      acldvppSetPicDescSize(inputPicDesc_, image.size);
+      acldvppSetPicDescSize(inputPicDesc_, frame.size);
 
       return ACLLITE_OK;
     }
@@ -815,8 +899,7 @@ namespace acle {
 #define MTU 1300
   class Demuxer {
   public:
-    Demuxer(AVCodecContext* ctx) {
-      codecCtx = ctx;
+    Demuxer() {
     };
 
     ~Demuxer() {
@@ -828,57 +911,65 @@ namespace acle {
         int err;
         fmt_ctx = avformat_alloc_context();
         if ((err = avformat_open_input(&fmt_ctx, file.c_str(), NULL, NULL)) < 0) {
-          throw std::runtime_error("ERROR: avformat_open_input error, open input file.");
+          E_LOG("ERROR: avformat_open_input error, open input file.");
           close();
-          return err;
+          return false;
         }
 
         if ((err = avformat_find_stream_info(fmt_ctx, NULL)) < 0) {
-          throw std::runtime_error("ERROR: avformat_find_stream_info error, find stream information failed.");
+          E_LOG("ERROR: avformat_find_stream_info error, find stream information failed.");
           close();
-          return err;
+          return false;
         }
 
         /* select the video stream */
         err = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, 0, -1, &codec, 0);
         if (err < 0) {
-          throw std::runtime_error("ERROR: av_find_best_stream error, find video stream failed.");
+          E_LOG("ERROR: av_find_best_stream error, find video stream failed.");
           close();
-          return err;
+          return false;
         }
         video_stream_index = err;
 
         /* create decoding context */
         if (!(codecCtx = avcodec_alloc_context3(codec))) {
           close();
-          return AVERROR(ENOMEM);
+          return false;
         }
 
         if (avcodec_parameters_to_context(codecCtx, fmt_ctx->streams[video_stream_index]->codecpar) < 0) {
-          throw std::runtime_error("ERROR: avcodec_parameters_to_context error, add codec param to codec failed.");
+          E_LOG("ERROR: avcodec_parameters_to_context error, add codec param to codec failed.");
+          close();
+          return false;
         }
+        fileWidth = fmt_ctx->streams[video_stream_index]->codecpar->width;
+        fileHeight = fmt_ctx->streams[video_stream_index]->codecpar->height;
 
         /* init the video decoder */
         if ((err = avcodec_open2(codecCtx, codec, NULL)) < 0) {
-          throw std::runtime_error("ERROR: avcodec_open2 error, open video decoder failed.");
+          E_LOG("ERROR: avcodec_open2 error, open video decoder failed.");
           close();
-          return err;
+          return false;
         }
       }
       else {
         codec = avcodec_find_decoder_by_name("h264");
         if (!codec) {
-          throw std::runtime_error("Codec not found");
+          E_LOG("Codec not found");
+          close();
+          return false;
         }
         codecCtx = avcodec_alloc_context3(codec);
         if (!codecCtx) {
           E_LOG("[Demuxer::open] codecCtx cannot be nullptr!");
+          close();
           return false;
         }
         buff = new uint8_t[BUF_SIZE];
         parser = av_parser_init(AV_CODEC_ID_H264);
         if (!parser) {
           E_LOG("[Demuxer::open] use av_parser_init failed");
+          close();
           return false;
         }
       }
@@ -892,6 +983,10 @@ namespace acle {
       if (parser) {
         av_parser_close(parser);
         parser = nullptr;
+      }
+      if (tmpPkt) {
+        av_packet_free(&tmpPkt);
+        tmpPkt = nullptr;
       }
       if (buff) {
         delete[] buff;
@@ -907,7 +1002,7 @@ namespace acle {
       }
     }
 
-    int demux(AclPacket* packet) {
+    int demux(AclPacket& packet) {
       int err = 0;
       AVPacket inPacket;
       if ((err = av_read_frame(fmt_ctx, &inPacket)) < 0) {
@@ -918,25 +1013,28 @@ namespace acle {
           return -3;
         }
         else {
-          throw std::runtime_error("ERROR: av_read_frame error");
-          return -1;
+          E_LOG("ERROR: av_read_frame error");
+          return -2;
         }
       }
       if (inPacket.stream_index != video_stream_index) return -2;
       void* buffer = CopyDataToDevice(inPacket.data, inPacket.size,
         runMode, DVPP);
-      if (buffer == nullptr) {
-        ACLLITE_LOG_ERROR("Copy frame h26x data to dvpp failed");
-        return ACLLITE_ERROR_COPY_DATA;
+      if (!buffer) {
+        E_LOG("Copy packet to device failed");
+        return -1;
       }
-      packet->data = (uint8_t*)buffer;
-      packet->size = inPacket.size;
-      packet->pts = inPacket.pts;
+      packet.data = (uint8_t*)buffer;
+      packet.size = inPacket.size;
+      packet.pts = inPacket.pts;
       av_packet_unref(&inPacket);
       return 0;
     }
 
-    int demux(const uint8_t* data, int len, int64_t timestamp, AclPacket* packet) {
+    int demux(const uint8_t* data, int len, int64_t timestamp, AclPacket& packet) {
+      if (tmpPkt == nullptr) {
+        tmpPkt = av_packet_alloc();
+      }
       frameIndex++;
       uint8_t* h264Data = new uint8_t[BUF_SIZE];
       uint8_t* tempData = new uint8_t[BUF_SIZE];
@@ -949,15 +1047,25 @@ namespace acle {
       int num = 0;
       D_LOG("inputLen:{}", inputLen);
       while (inputLen) {
-        int ret = av_parser_parse2(parser, codecCtx, &packet->data, &packet->size,
+        int ret = av_parser_parse2(parser, codecCtx, &tmpPkt->data, &tmpPkt->size,
           h264Data, inputLen, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
         if (ret < 0) {
           E_LOG("parser wrong");
         }
         count += ret;
         inputLen -= ret;
-        packet->pts = ts;
-        if (packet->size) num++;
+        tmpPkt->pts = ts;
+        if (tmpPkt->size) {
+          num++;
+          packet.data = (uint8_t*)CopyDataToDevice(tmpPkt->data, tmpPkt->size, runMode, DVPP);
+          if (!packet.data) {
+            E_LOG("Copy packet to device failed");
+            return -1;
+          }
+          packet.size = tmpPkt->size;
+          packet.pts = tmpPkt->pts;
+          av_packet_unref(tmpPkt);
+        }
       }
       delete[] tempData;
       tempData = nullptr;
@@ -985,6 +1093,9 @@ namespace acle {
         return -1;
       }
     }
+
+    int getFileWidth() { return fileWidth; }
+    int getFileHeight() { return fileHeight; }
 
   private:
     void inputPayload(const uint8_t* data, int len, int64_t timestamp) {
@@ -1087,8 +1198,11 @@ namespace acle {
     uint32_t h264Startcode = 0x01000000;
     uint8_t* buff = nullptr;
     std::queue<std::tuple<uint8_t*, size_t, int64_t>> output_h264data;
+    AVPacket* tmpPkt = nullptr;
     size_t outSize = 0;
     int frameIndex = 0;
+    int fileWidth = 0;
+    int fileHeight = 0;
   };
 
   class Muxer {
@@ -1575,7 +1689,7 @@ namespace acle {
       isClose = true;
     }
 
-    AclLiteError resize(const ImageData& src, ImageData& dest, uint32_t width, uint32_t height) {
+    AclLiteError resize(const AclFrame& src, AclFrame& dest, uint32_t width, uint32_t height) {
       if (src.width == width || src.height == height) {
         E_LOG("[ImageHandler::resize] src width={}, height={} equal to target size", src.width, src.height);
         return ACLLITE_ERROR_DEST_INVALID;
@@ -1586,20 +1700,18 @@ namespace acle {
       return ret;
     }
 
-    AclLiteError crop(ImageData& src1, ImageData& dest, uint32_t targetX, uint32_t targetY, 
+    AclLiteError crop(AclFrame& src1, AclFrame& dest, uint32_t targetX, uint32_t targetY,
       uint32_t width , uint32_t height) {
       AclLiteError ret = cropHandle(src1, dest, targetX, targetY, width, height);
       return ret;
     }
 
-    AclLiteError overlay(const AclImage& src1, ImageData& dest, uint32_t targetX, uint32_t targetY) {
-      AclLiteError ret = pasteHandle(src1, dest, targetX, targetY);
-      return ret;
+    AclLiteError overlay(const AclImage& src1, AclFrame& dest, uint32_t targetX, uint32_t targetY) {
+      return pasteHandle(src1, dest, targetX, targetY);
     }
 
     AclLiteError cvtColor(const AclImage& src, AclImage& dest) {
-      AclLiteError ret = convertHandle(src, dest);
-      return ret;
+      return convertHandle(src, dest);
     }
 
   private:
@@ -1617,7 +1729,7 @@ namespace acle {
     }
 
     //缩放功能实现
-    AclLiteError initResizeInputDesc(const ImageData& inputImage) {
+    AclLiteError initResizeInputDesc(const AclFrame& inputImage) {
       uint32_t alignWidth = inputImage.alignWidth;
       uint32_t alignHeight = inputImage.alignHeight;
       if (alignWidth == 0 || alignHeight == 0) {
@@ -1701,7 +1813,7 @@ namespace acle {
       return ACLLITE_OK;
     }
 
-    AclLiteError initResizeResource(const ImageData& inputImage) {
+    AclLiteError initResizeResource(const AclFrame& inputImage) {
       resizeConfig_ = acldvppCreateResizeConfig();
       if (resizeConfig_ == nullptr) {
         E_LOG("[ImageHandler::initResizeResource] Dvpp resize init failed for create config failed");
@@ -1732,7 +1844,7 @@ namespace acle {
       destoryResource();
     }
 
-    AclLiteError resizeExecute(const ImageData& srcImage, ImageData& resizedImage) {
+    AclLiteError resizeExecute(const AclFrame& srcImage, AclFrame& resizedImage) {
       AclLiteError atlRet = initResizeResource(srcImage);
       if (atlRet != ACLLITE_OK) {
         ACLLITE_LOG_ERROR("Dvpp resize failed for init error");
@@ -1845,7 +1957,7 @@ namespace acle {
     }
 
     //裁剪输出图片描述初始化
-    AclLiteError initCropOutputDesc(ImageData& inputImage) {
+    AclLiteError initCropOutputDesc(AclFrame& inputImage) {
       int outWidth = cropOutSize_.width;
       int outHeight = cropOutSize_.height;
       int outWidthStride = ALIGN_UP16(outWidth);
@@ -1884,7 +1996,7 @@ namespace acle {
     }
 
     //叠加输出图片描述初始化
-    AclLiteError initPasteOutputDesc(ImageData& inputImage) {
+    AclLiteError initPasteOutputDesc(AclFrame& inputImage) {
       uint32_t widthStride = ALIGN_UP16(inputImage.width);
       uint32_t heightStride = ALIGN_UP2(inputImage.height);
       if (!inputImage.data) {
@@ -1953,13 +2065,13 @@ namespace acle {
       destoryResource();
     }
 
-    AclLiteError cropHandle(ImageData& topImg, ImageData& destImage,
+    AclLiteError cropHandle(AclFrame& topImg, AclFrame& destImage,
       uint32_t targetX, uint32_t targetY, uint32_t width, uint32_t height) {
 
       return ACLLITE_OK;
     }
 
-    AclLiteError pasteHandle(const AclImage& topImg, ImageData& destImg, uint32_t targetX, uint32_t targetY) {
+    AclLiteError pasteHandle(const AclImage& topImg, AclFrame& destImg, uint32_t targetX, uint32_t targetY) {
       //初始化输入图片信息描述
       if (initCropOrPasteInputDesc(topImg) != ACLLITE_OK) {
         return ACLLITE_ERROR;

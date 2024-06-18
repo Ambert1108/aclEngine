@@ -52,7 +52,7 @@ namespace acle {
     * H264_HIGH_LEVEL
     * <Ambert May-20-2024>
     */
-    acldvppStreamFormat enType = H264_MAIN_LEVEL;
+    acldvppStreamFormat enType = H264_BASELINE_LEVEL;
     aclrtContext context = nullptr;
     aclrtRunMode runMode = ACL_HOST;
     std::string file;

@@ -71,10 +71,17 @@ int main(int argc, char* argv[]) {
   }
   
   using namespace acle;
-  Decoder23* decoder = new Decoder23(inputName, deviceId, nullptr);
-  if (decoder->open() != 0) {
+  //Decoder23* decoder = new Decoder23(inputName, deviceId, nullptr);
+  //if (decoder->open() != 0) {
+  //  return -1;
+  //}
+
+  Demuxer* demuxer = new Demuxer();
+  if (!demuxer->open(inputName)) {
     return -1;
   }
+
+  Decoder* decoder = nullptr;
 
   Encoder* encoder = nullptr;
   
@@ -87,7 +94,8 @@ int main(int argc, char* argv[]) {
 
   seeker::rtp::RtpTransceiver::init(8);
 
-  std::unique_ptr<VideoEngine23::Mux23> muxer = std::make_unique<VideoEngine23::Mux23>();
+  //std::unique_ptr<VideoEngine23::Mux23> muxer = std::make_unique<VideoEngine23::Mux23>();
+  std::unique_ptr<Muxer> muxer = std::make_unique<Muxer>();
   std::unique_ptr<seeker::rtp::RtpTransceiver> sender = std::make_unique<seeker::rtp::RtpTransceiver>("huawei", 32);
   sender->open("0.0.0.0", 41200);
   sender->setDestination(ip, port);
@@ -106,11 +114,27 @@ int main(int argc, char* argv[]) {
 
   bool run = true;
   while (run) {
-    ImageData frame;
-    AclLiteError ret = decoder->readFrame(frame);
-    if (ret != ACLLITE_OK) break;
-  
-    ImageData newFrame;
+    AclPacket rpkt;
+    int ret = demuxer->demux(rpkt);
+    if (ret == -3) run = false;
+    AclFrame frame;
+    if (!decoder) {
+      CodecFormat fmt;
+      fmt.width = demuxer->getFileWidth();
+      fmt.height = demuxer->getFileHeight();
+      aclrtGetCurrentContext(&fmt.context);
+      I_LOG("[Decoder:Init] width={}, height={}, format={}, enType={}",
+        fmt.width, fmt.height, fmt.format, fmt.enType);
+      decoder = new Decoder(fmt);
+      if (!decoder->open()) {
+        E_LOG("[Decoder::OpenVideoCapture] Failed to open vdec");
+        break;
+      }
+    }
+    ret = decoder->readFrame(rpkt, frame);
+    if (ret != 0) continue;
+    
+    AclFrame newFrame;
 
     //视频缩放
     //if (imager.resize(frame, newFrame, 320, 180) != ACLLITE_OK) {
@@ -175,11 +199,15 @@ int main(int argc, char* argv[]) {
     while (!sendQueue.empty()) sender->sendRtp(sendQueue);
   }
   
+  if (demuxer) delete demuxer;
+
   if (decoder != nullptr) {
+    I_LOG("start delete decoder");
     delete decoder;
   }
   
   if (encoder != nullptr) {
+    I_LOG("start delete encoder"); 
     delete encoder;
   }
 
