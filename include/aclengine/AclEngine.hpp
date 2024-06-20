@@ -655,7 +655,7 @@ namespace acle {
       I_LOG("[AclEngine::Encoder] Encoder is closed");
     }
 
-    int writeFrame(const AclFrame& input, AclPacket& packet) {
+    int writeFrame(const AclFrame& input, AclPacket& packet, bool keyFrame = false) {
       AclLiteError ret = createInputPicDesc(input);
       if (ret != ACLLITE_OK) {
         E_LOG("[Encoder::writeFrame] fail to create picture description");
@@ -670,6 +670,9 @@ namespace acle {
         E_LOG("[Encoder::writeFrame] encode frame failed, errorCode={}", ret);
         return -1;
       }
+
+      if (keyFrame) setFrameConfig(0, 1);
+      else setFrameConfig(0, 0);
 
       if (pakcetQueue.Empty()) {
         W_LOG("[Encoder::writeFrame] get packet failed, wait encode process");
@@ -854,7 +857,7 @@ namespace acle {
         return ACLLITE_ERROR_VENC_SET_EOS;
       }
 
-      /* 设置是否强制重新开启I帧，0：不强制，1：强制 <Ambert May-21-2024> */
+      /* 设置是否强制重新开启I帧间隔，0：不强制，1：强制 <Ambert May-21-2024> */
       ret = aclvencSetFrameConfigForceIFrame(vencFrameConfig_, forceIFrame);
       if (ret != ACL_SUCCESS) {
         E_LOG("[Encoder::setFrameConfig] fail to set venc ForceIFrame");
