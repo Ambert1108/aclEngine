@@ -161,7 +161,7 @@ namespace acle {
   };
 
   struct AclPacket {
-    uint8_t* data;
+    void* data = nullptr;
     int32_t size;
     uint64_t pts;
 
@@ -178,10 +178,10 @@ namespace acle {
     //}
 
     ~AclPacket() {
-      if (data) {
-        acldvppFree(data);
-        data = nullptr;
-      }
+      //if (data) {
+      //  acldvppFree(data);
+      //  data = nullptr;
+      //}
     };
   };
 

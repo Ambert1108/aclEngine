@@ -71,8 +71,8 @@ int main(int argc, char* argv[]) {
   }
   
   using namespace acle;
-  //Decoder23* decoder = new Decoder23(inputName, deviceId, nullptr);
-  //if (decoder->open() != 0) {
+  //Decoder23* decoder23 = new Decoder23(inputName, deviceId, nullptr);
+  //if (decoder23->open() != 0) {
   //  return -1;
   //}
 
@@ -100,9 +100,9 @@ int main(int argc, char* argv[]) {
   sender->open("0.0.0.0", 41200);
   sender->setDestination(ip, port);
 
-  AVPacket* pkt = av_packet_alloc();
   std::queue<std::vector<uint8_t>> rtpBuf = {};
   std::deque<seeker::rtp::Rtp> sendQueue = {};
+  SafeQueue<std::shared_ptr<AclPacket>> rpktQue{};
 
   //设置视频seq, timestamp及timestamp增量，mark值，随机设置ssrc，设置payloadType
   uint16_t seq = 1;
@@ -111,12 +111,16 @@ int main(int argc, char* argv[]) {
   bool mark = false;
   uint32_t ssrc = rand() % 9000000 + 1000000 + (int32_t)seeker::time::currentTime();
   int videoPayloadType = 96;
-
+  int totalFrameNum = 0;
   bool run = true;
   while (run) {
-    AclPacket rpkt;
+    std::shared_ptr<AclPacket> rpkt = std::make_shared<AclPacket>();
     int ret = demuxer->demux(rpkt);
-    if (ret == -3) run = false;
+    if (ret != 0) {
+      if (ret == -3) run = false;
+      else continue;
+    }
+    
     AclFrame frame;
     if (!decoder) {
       CodecFormat fmt;
@@ -133,6 +137,10 @@ int main(int argc, char* argv[]) {
     }
     ret = decoder->readFrame(rpkt, frame);
     if (ret != 0) continue;
+
+    //ImageData frame;
+    //AclLiteError ret = decoder23->readFrame(frame);
+    //if (ret != ACLLITE_OK) break;
     
     AclFrame newFrame;
 
@@ -173,7 +181,7 @@ int main(int argc, char* argv[]) {
     I_LOG("current pkt size={}", pkt.size);
     //av_packet_unref(pkt);
 
-    if (muxer->mux(pkt.data, pkt.size, rtpBuf) != 0) {
+    if (muxer->mux((uint8_t*)pkt.data, pkt.size, rtpBuf) != 0) {
       E_LOG("muxer failed");
       continue;
     }
@@ -197,7 +205,10 @@ int main(int argc, char* argv[]) {
       rtpBuf.pop();
     }
     while (!sendQueue.empty()) sender->sendRtp(sendQueue);
+    totalFrameNum++;
   }
+
+  //if (decoder23) delete decoder23;
   
   if (demuxer) delete demuxer;
 
@@ -212,7 +223,7 @@ int main(int argc, char* argv[]) {
   }
 
   seeker::rtp::RtpTransceiver::shutdown();
-  ACLLITE_LOG_INFO("[main] dec and enc test finish");
+  I_LOG("[main] dec and enc test finish, totalNum={}", totalFrameNum);
 
 	return 0;
 }

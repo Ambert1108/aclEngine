@@ -124,6 +124,7 @@ if(${MODULE} MATCHES "NORMAL")
     )
 
     add_subdirectory(samples/decandenc)
+    add_subdirectory(samples/cpp)
     #add_subdirectory(samples/encode_test)
     #add_subdirectory(samples/venc/src)
     #add_subdirectory(samples/png)

@@ -70,7 +70,7 @@ namespace acle{
     }
 
     if ((aclRet != ACL_SUCCESS) || (buffer == nullptr)) {
-      E_LOG("Malloc memory failed, type:{}, errorno:{}",
+      E_LOG("Malloc memory failed, type:{}, error:{}",
         memType, aclRet);
       return nullptr;
     }
