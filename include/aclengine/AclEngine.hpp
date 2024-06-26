@@ -687,7 +687,7 @@ namespace acle {
       AclLiteError atlRet = ACLLITE_OK;
       void* data = vencData;
       if (encodeCtx.runMode == ACL_HOST) {
-        data = CopyDataToHost(vencData, size, encodeCtx.runMode, NORMAL);
+        data = copyDataToHost(vencData, size, encodeCtx.runMode, NORMAL);
       }
       size_t ret = fwrite(data, 1, size, outFp_);
       if (ret != size) {
@@ -715,7 +715,7 @@ namespace acle {
       else {
         void* data = acldvppGetStreamDescData(output);
         uint32_t size = acldvppGetStreamDescSize(output);
-        data = CopyDataToHost(data, size, ACL_HOST, NORMAL);
+        data = copyDataToHost(data, size, ACL_HOST, NORMAL);
         AclPacket pkt;
         pkt.data = data;
         pkt.size = acldvppGetStreamDescSize(output);
@@ -1071,7 +1071,7 @@ namespace acle {
       // receive single frame from ffmpeg
       int i = 1;
       while (av_bsf_receive_packet(bsfCtx, &inPacket) == 0) {
-        packet->data = CopyDataToDevice(inPacket.data, inPacket.size, runMode, DVPP);
+        packet->data = copyDataToDevice(inPacket.data, inPacket.size, runMode, DVPP);
         packet->size = inPacket.size;
         if (i > 1) I_LOG("receive {} packet", i);
         //I_LOG("demux frame:{}", frameIndex);
@@ -1121,7 +1121,7 @@ namespace acle {
         tmpPkt->pts = ts;
         if (tmpPkt->size) {
           num++;
-          packet.data = CopyDataToDevice(tmpPkt->data, tmpPkt->size, runMode, DVPP);
+          packet.data = copyDataToDevice(tmpPkt->data, tmpPkt->size, runMode, DVPP);
           if (!packet.data) {
             E_LOG("Copy packet to device failed");
             return -1;
@@ -1766,7 +1766,7 @@ namespace acle {
       return ret;
     }
 
-    AclLiteError crop(AclFrame& src1, AclFrame& dest, uint32_t targetX, uint32_t targetY,
+    AclLiteError crop(AclImage& src1, AclImage& dest, uint32_t targetX, uint32_t targetY,
       uint32_t width , uint32_t height) {
       AclLiteError ret = cropHandle(src1, dest, targetX, targetY, width, height);
       return ret;
@@ -1958,8 +1958,10 @@ namespace acle {
 
     //裁剪/叠加功能输入图片描述初始化
     AclLiteError initCropOrPasteInputDesc(const AclImage& inputImage) {
-      uint32_t alignWidth = ALIGN_UP16(inputImage.width);
-      uint32_t alignHeight = ALIGN_UP2(inputImage.height);
+      //uint32_t alignWidth = ALIGN_UP16(inputImage.width);
+      //uint32_t alignHeight = ALIGN_UP2(inputImage.height);
+      uint32_t alignWidth = inputImage.widthStride;
+      uint32_t alignHeight = inputImage.heightStride;
       if (alignWidth == 0 || alignHeight == 0) {
         E_LOG("Invalid image parameters, width={}, height={}",
           inputImage.width, inputImage.height);
@@ -2023,7 +2025,7 @@ namespace acle {
     }
 
     //裁剪输出图片描述初始化
-    AclLiteError initCropOutputDesc(AclFrame& inputImage) {
+    AclLiteError initCropOutputDesc(AclImage& inputImage) {
       int outWidth = cropOutSize_.width;
       int outHeight = cropOutSize_.height;
       int outWidthStride = ALIGN_UP16(outWidth);
@@ -2036,7 +2038,7 @@ namespace acle {
 
       outDevBufSize = YUV420SP_SIZE(outWidthStride,
         outHeightStride);
-      aclError aclRet = acldvppMalloc(&outDevBuf, outDevBufSize);
+      aclError aclRet = acldvppMalloc(&inputImage.data, outDevBufSize);
       if (aclRet != ACL_SUCCESS) {
         ACLLITE_LOG_ERROR("Dvpp crop malloc output memory failed, crop "
           "width %d, height %d size %d, error %d",
@@ -2131,9 +2133,71 @@ namespace acle {
       destoryResource();
     }
 
-    AclLiteError cropHandle(AclFrame& topImg, AclFrame& destImage,
+    AclLiteError cropHandle(const AclImage& topImg, AclImage& destImg,
       uint32_t targetX, uint32_t targetY, uint32_t width, uint32_t height) {
+      //初始化输入图片信息描述
+      if (initCropOrPasteInputDesc(topImg) != ACLLITE_OK) {
+        return ACLLITE_ERROR;
+      }
 
+      //若右偏移或下偏移大于被贴对象的宽度或高度，则需要裁剪
+      //计算裁剪ROI区域
+      //必须为偶数
+      uint32_t cropLeftOffset = 0; //相对输入图片的左偏移
+      uint32_t cropTopOffset = 0; //相对输入图片的上偏移
+
+      //必须为奇数
+      uint32_t cropRightOffset = topImg.width - ((topImg.width & 1) ^ 1);  //相对输入图片的右偏移
+      uint32_t cropBottomOffset = topImg.height - ((topImg.height & 1) ^ 1); //相对输入图片的下偏移
+
+      //设置输入图片裁剪的ROI区域
+      cropArea_ = acldvppCreateRoiConfig(cropLeftOffset, cropRightOffset,
+        cropTopOffset, cropBottomOffset);
+      if (cropArea_ == nullptr) {
+        E_LOG("acldvppCreateRoiConfig cropArea_ failed");
+        return ACLLITE_ERROR;
+      }
+
+      //初始化输出图片信息描述
+      if (initCropOutputDesc(destImg) != ACLLITE_OK) {
+        return ACLLITE_ERROR;
+      }
+
+      //计算叠加ROI区域
+      // 必须为偶数
+      // 左偏移必须满足16对齐
+      uint32_t pasteLeftOffset = (targetX / 16) * 16;
+      uint32_t pasteTopOffset = targetY - (targetY & 1);
+
+      // 必须为奇数
+      uint32_t pasteRightOffset = pasteLeftOffset + topImg.width;
+      pasteRightOffset = pasteRightOffset - ((pasteRightOffset & 1) ^ 1);
+      uint32_t pasteBottomOffset = pasteTopOffset + topImg.height;
+      pasteBottomOffset = pasteBottomOffset - ((pasteBottomOffset & 1) ^ 1);
+
+      pasteArea_ = acldvppCreateRoiConfig(pasteLeftOffset, pasteRightOffset,
+        pasteTopOffset, pasteBottomOffset);
+      if (pasteArea_ == nullptr) {
+        E_LOG("acldvppCreateRoiConfig pasteArea_ failed");
+        return ACLLITE_ERROR;
+      }
+
+      aclError aclRet = acldvppVpcCropAndPasteAsync(channelDesc, inputPicDesc,
+        outputPicDesc, cropArea_, pasteArea_, stream_);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[ImageHandler::pasteHandle] acldvppVpcCropAndPasteAsync failed, aclRet={}", aclRet);
+        return ACLLITE_ERROR;
+      }
+
+      aclRet = aclrtSynchronizeStream(stream_);
+      if (aclRet != ACL_SUCCESS) {
+        E_LOG("[ImageHandler::pasteHandle] use aclrtSynchronizeStream failed, aclRet={}", aclRet);
+        return ACLLITE_ERROR;
+      }
+
+      destroyCropOrPasteResource();
+
+      return ACLLITE_OK;
       return ACLLITE_OK;
     }
 
