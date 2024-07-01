@@ -56,21 +56,21 @@ int main(int argc, char* argv[]) {
   int32_t deviceId = 1;
   std::string inputName = "/home/data/v2.mp4";
   std::string inputImage = "/home/data/cat.jpg";
-  std::string ip = "10.4.6.117";
+  std::string ip = "10.4.7.113";
   uint16_t port = 50104;
   int destWidth = 1280;
   int destHeight = 720;
 
   I_LOG("[main] deviceI={}, input={}, addr={}:{}, destWidth={}, destHeight={}",
     deviceId, inputName, ip, port, destWidth, destHeight);
+  using namespace acle;
 
-  AclLiteResource aclDev(deviceId, "", false);
-  if (aclDev.Init() != ACLLITE_OK) {
+  Resource aclDev(deviceId, "", false);
+  if (aclDev.Init() != ACLE_OK) {
     I_LOG("init acl dev failed");
     return -1;
   }
   
-  using namespace acle;
   //Decoder23* decoder23 = new Decoder23(inputName, deviceId, nullptr);
   //if (decoder23->open() != 0) {
   //  return -1;
@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
   reader.open();
   ImageHandler imager;
   imager.open();
-  AclImage img = reader.imgread(inputImage);
+  AclFrame img = reader.imgread(inputImage);
   //SaveOutputFile("check.yuv", img.data, img.size);
 
   seeker::rtp::RtpTransceiver::init(8);

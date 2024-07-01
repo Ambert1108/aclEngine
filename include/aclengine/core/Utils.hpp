@@ -1,9 +1,11 @@
-// @brief: 操作工具接口
+// @brief: 昇腾操作工具集合
 // @copyright: Copyright seekloud 2024
 // @birth: [Ambert@2024.6.17]
 // @version: V0.0.1
-// @revision: [xxx@2024.6.17]
+// @revision: [Ambert@2024.6.17]
 
+#ifndef UTILS_H
+#define UTILS_H
 #pragma once
 
 #include <unistd.h>
@@ -27,7 +29,7 @@ namespace acle{
     HOST,
     DEVICE,
     DVPP,
-    INVALID_TYPE
+    INVALID
   };
 
   inline aclrtMemcpyKind getCopyPolicy(aclrtRunMode srcDev, CopyDirection direct, MemoryType memType) {
@@ -45,8 +47,8 @@ namespace acle{
     }
 
     return policy;
-  }
-
+  };
+  
   inline void* mallocMemory(uint32_t dataSize, MemoryType memType) {
     void* buffer = nullptr;
     aclError aclRet = ACL_SUCCESS;
@@ -75,8 +77,8 @@ namespace acle{
       return nullptr;
     }
     return buffer;
-  }
-
+  };
+  
   inline void freeMemory(void* mem, MemoryType memType) {
     switch (memType) {
     case NORMAL:
@@ -95,42 +97,40 @@ namespace acle{
       E_LOG("Invalid memory type %d", memType);
       break;
     }
-  }
-
+  };
+  
   inline void* copyData(const void* data, uint32_t size, aclrtMemcpyKind policy, MemoryType memType) {
     void* buffer = mallocMemory(size, memType);
     if (buffer == nullptr) {
       return nullptr;
     }
-
+    
     aclError aclRet = aclrtMemcpy(buffer, size, data, size, policy);
     if (aclRet != ACL_SUCCESS) {
       E_LOG("Copy data to device failed, ret is {}", aclRet);
       freeMemory(buffer, memType);
       return nullptr;
     }
-
+    
     return buffer;
-  }
+  };
 
-  inline void* copyDataToDevice(const void* data, uint32_t size,
-    aclrtRunMode curRunMode, MemoryType memType) {
+  inline void* copyDataToDevice(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType) {
     if ((data == nullptr) || (size == 0) ||
       ((curRunMode != ACL_HOST) && (curRunMode != ACL_DEVICE)) ||
-      (memType >= INVALID_TYPE) || (memType == HOST)) {
+      (memType >= INVALID) || (memType == HOST)) {
       E_LOG("Copy data args invalid, data {}, "
         "size {}, src dev {}, memory type {}",
         data, size, curRunMode, memType);
       return nullptr;
     }
-
+    
     aclrtMemcpyKind policy = getCopyPolicy(curRunMode, TO_DEVICE, memType);
-
+    
     return copyData(data, size, policy, memType);
-  }
+  };
 
-  inline void* copyDataToHost(const void* data, uint32_t size,
-    aclrtRunMode curRunMode, MemoryType memType) {
+  inline void* copyDataToHost(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType) {
     if ((data == nullptr) || (size == 0) ||
       ((curRunMode != ACL_HOST) && (curRunMode != ACL_DEVICE)) ||
       ((memType != HOST) && (memType != NORMAL))) {
@@ -139,9 +139,11 @@ namespace acle{
         data, size, curRunMode, memType);
       return nullptr;
     }
-
+    
     aclrtMemcpyKind policy = getCopyPolicy(curRunMode, TO_HOST, memType);
-
+    
     return copyData(data, size, policy, memType);
-  }
+  };
 }
+
+#endif UTILS_H

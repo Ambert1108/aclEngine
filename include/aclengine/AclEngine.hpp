@@ -1,15 +1,18 @@
+// @brief: 昇腾能力引擎
+// @copyright: Copyright seekloud 2024
+// @birth: [Ambert@2024.5.20]
+// @version: V0.0.3
+// @revision: [Ambert@2024.7.1]
+
 #pragma once
 #include "core/Types.h"
 #include "core/Utils.hpp"
 #include "core/SafeQueue.hpp"
+#include "core/Error.h"
  
 #include "acl/acl.h"
-#include "refer/AclLiteUtils.h"
-#include "refer/AclLiteError.h"
-#include "refer/AclLiteResource.h"
-#include "refer/AclLiteVideoProc.h"
-#include "refer/AclLiteImageProc.h"
-#include "refer/AclLiteVideoCapBase.h"
+//#include "refer/AcleError.h"
+//#include "refer/AclLiteResource.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -24,85 +27,82 @@ extern "C" {
 #include <atomic>
 
 namespace acle {
-  class Decoder23 {
+  class Resource {
   public:
-    Decoder23(std::string streamName, int32_t devId, aclrtContext aclCtx) :
-      aclLiteVideoProc(nullptr),
-      streamName(streamName),
-      deviceId(devId),
-      context(aclCtx) {
-      ACLLITE_LOG_INFO("[Decoder::Decoder] Decoder is create, streamName=%s, devId=%d", streamName.c_str(), devId);
-    }
+    Resource() :isReleased_(false), useDefaultCtx_(true), deviceId_(0),
+      runMode_(ACL_HOST), context_(nullptr), aclConfig_("") {};
 
-    ~Decoder23() {
-      close();
-    }
+    Resource(int32_t devId, const std::string& aclConfigPath,
+      bool useDefaultCtx = true) :isReleased_(false),
+      useDefaultCtx_(useDefaultCtx), deviceId_(devId),
+      runMode_(ACL_HOST), context_(nullptr), aclConfig_(aclConfigPath) {};
 
-    AclLiteError open() {
-      if (OpenVideoCapture() != ACLLITE_OK) {
-        return ACLLITE_ERROR;
+    ~Resource() { Release(); }
+
+    AcleError Init() {
+      aclError ret = aclrtSetDevice(deviceId_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("Acl open device {} failed, errorCode is {}", deviceId_, ret);
+        return ACLE_ERROR;
       }
+      I_LOG("Open device {} ok", deviceId_);
 
-      return ACLLITE_OK;
-    }
-
-    AclLiteError readFrame(ImageData& data) {
-      uint32_t videoWidth_ = aclLiteVideoProc->Get(FRAME_WIDTH);
-      uint32_t videoHeight_ = aclLiteVideoProc->Get(FRAME_HEIGHT);
-      float fps = aclLiteVideoProc->Get(VIDEO_FPS);
-
-
-      AclLiteError ret = aclLiteVideoProc->Read(data);
-      if (ret == ACLLITE_ERROR_DECODE_FINISH) {
-        ACLLITE_LOG_ERROR("[Decoder::getFrame] decoder read frame finish");
-      }
-
-      else if (ret != ACLLITE_OK) {
-        ACLLITE_LOG_ERROR("[Decoder::getFrame] decoder read frame failed, errCode=%d", ret);
-      }
-      return ret;
-    }
-
-    void close() {
-      if (aclLiteVideoProc != nullptr) {
-        //aclLiteVideoProc->Close();
-        delete aclLiteVideoProc;
-        aclLiteVideoProc = nullptr;
-      }
-      ACLLITE_LOG_INFO("[Decoder::close] Decoder is closed");
-    }
-
-  private:
-    AclLiteError OpenVideoCapture() {
-      if (IsRtspAddr(streamName)) {
-        aclLiteVideoProc = new AclLiteVideoProc(streamName, deviceId);
-      }
-      else if (IsVideoFile(streamName)) {
-        if (!IsPathExist(streamName)) {
-          ACLLITE_LOG_ERROR("[Decoder::OpenVideoCapture] The %s is inaccessible", streamName.c_str());
-          return ACLLITE_ERROR;
+      if (useDefaultCtx_) {
+        I_LOG("Use default context currently");
+        ret = aclrtGetCurrentContext(&context_);
+        if ((ret != ACL_SUCCESS) || (context_ == nullptr)) {
+          E_LOG("Get current acl context failed, errorCode is {}", ret);
+          return ACLE_ERROR_GET_ACL_CONTEXT;
         }
-        aclLiteVideoProc = new AclLiteVideoProc(streamName, deviceId);
       }
       else {
-        ACLLITE_LOG_ERROR("[Decoder::OpenVideoCapture] Invalid param. The arg should be accessible rtsp,"
-          " video file or camera id");
-        return ACLLITE_ERROR;
+        ret = aclrtCreateContext(&context_, deviceId_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("Create acl context failed, errorCode is {}", ret);
+          return ACLE_ERROR_CREATE_ACL_CONTEXT;
+        }
       }
 
-      if (!aclLiteVideoProc->IsOpened()) {
-        delete aclLiteVideoProc;
-        ACLLITE_LOG_ERROR("[Decoder::IsOpened] Failed to open vdec");
-        return ACLLITE_ERROR;
+      ret = aclrtGetRunMode(&runMode_);
+      if (ret != ACL_SUCCESS) {
+        W_LOG("acl get run mode failed, errorCode is {}", ret);
       }
+      I_LOG("runMode={}", runMode_);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
+    void Release() {
+      if (isReleased_) return;
 
-    std::string streamName;
-    int32_t deviceId;
-    aclrtContext context;
-    AclLiteVideoProc* aclLiteVideoProc;
+      aclError ret;
+      if ((!useDefaultCtx_) && (context_ != nullptr)) {
+        ret = aclrtDestroyContext(context_);
+        if (ret != ACL_SUCCESS) {
+          E_LOG("destroy context failed, errorCode is  {}", ret);
+        }
+        context_ = nullptr;
+      }
+      I_LOG("destroy context ok");
+
+      ret = aclrtResetDevice(deviceId_);
+      if (ret != ACL_SUCCESS) {
+        E_LOG("reset device failed, errorCode is {}", ret);
+      }
+      I_LOG("Reset device {} ok", deviceId_);
+
+      isReleased_ = true;
+    }
+    aclrtRunMode GetRunMode() { return runMode_; }
+    aclrtContext GetContext() { return context_; }
+    aclrtContext GetContextByDevice(int32_t devId);
+
+  private:
+    bool isReleased_;
+    bool useDefaultCtx_;
+    int32_t deviceId_;
+    aclrtRunMode runMode_;
+    aclrtContext context_;
+    std::string aclConfig_;
   };
 
 #define INVALID_CHANNEL_ID (-1)
@@ -142,7 +142,7 @@ namespace acle {
     int channelId_[VIDEO_CHANNEL_MAX];
     mutable std::mutex mutex_lock_;
   };
-  ChannelIdGenerator channelIdGenerator{};
+  inline ChannelIdGenerator channelIdGenerator{};
 
   class Decoder {
   public:
@@ -151,14 +151,6 @@ namespace acle {
     ~Decoder() { close(); };
 
     bool open() {
-      //if (isVideoFile(decodeCtx.file)) {
-      //  if (!fileIsExist(decodeCtx.file)) {
-      //    E_LOG("[Decoder::open] file {} is not find", decodeCtx.file);
-      //    return false;
-      //  }
-      //
-      //  return initSource();
-      //}
       alignWidth_ = ALIGN_UP16(decodeCtx.width);
       alignHeight_ = ALIGN_UP2(decodeCtx.height);
       outputPicSize_ = YUV420SP_SIZE(alignWidth_, alignHeight_);
@@ -317,14 +309,14 @@ namespace acle {
 
       D_LOG("Vdec subscribe thread exit!");
 
-      return (void*)ACLLITE_OK;
+      return (void*)ACLE_OK;
     }
 
-    AclLiteError createVdecChannel() {
+    AcleError createVdecChannel() {
       vdecChannelDesc_ = aclvdecCreateChannelDesc();
       if (vdecChannelDesc_ == nullptr) {
         E_LOG("Create vdec channel desc failed");
-        return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
+        return ACLE_ERROR_CREATE_DVPP_CHANNEL_DESC;
       }
 
       // 设置通道id
@@ -333,42 +325,42 @@ namespace acle {
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec channel id to {} failed, error:{}",
           channelId_, ret);
-        return ACLLITE_ERROR_SET_VDEC_CHANNEL_ID;
+        return ACLE_ERROR_SET_VDEC_CHANNEL_ID;
       }
 
       ret = aclvdecSetChannelDescThreadId(vdecChannelDesc_, threadId_);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec channel thread id failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_VDEC_CHANNEL_THREAD_ID;
+        return ACLE_ERROR_SET_VDEC_CHANNEL_THREAD_ID;
       }
 
       // callback func
       ret = aclvdecSetChannelDescCallback(vdecChannelDesc_, callback);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec channel callback failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_VDEC_CALLBACK;
+        return ACLE_ERROR_SET_VDEC_CALLBACK;
       }
 
       ret = aclvdecSetChannelDescEnType(vdecChannelDesc_, H264_BASELINE_LEVEL);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec channel entype failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_VDEC_ENTYPE;
+        return ACLE_ERROR_SET_VDEC_ENTYPE;
       }
 
       ret = aclvdecSetChannelDescOutPicFormat(vdecChannelDesc_, decodeCtx.format);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec channel pic format failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_VDEC_PIC_FORMAT;
+        return ACLE_ERROR_SET_VDEC_PIC_FORMAT;
       }
 
       // create vdec channel
       ret = aclvdecCreateChannel(vdecChannelDesc_);
       if (ret != ACL_SUCCESS) {
         E_LOG("fail to create vdec channel, error:{}", ret);
-        return ACLLITE_ERROR_CREATE_VDEC_CHANNEL;
+        return ACLE_ERROR_CREATE_VDEC_CHANNEL;
       }
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     bool initSource() {
@@ -400,7 +392,7 @@ namespace acle {
       //(void)aclrtSubscribeReport(static_cast<uint64_t>(threadId_), stream_);
 
       ret = createVdecChannel();
-      if (ret != ACLLITE_OK) {
+      if (ret != ACLE_OK) {
         E_LOG("Create vdec channel failed");
         return false;
       }
@@ -408,11 +400,11 @@ namespace acle {
       return true;
     }
 
-    AclLiteError createInputStreamDesc(std::shared_ptr<AclPacket> input, bool finish = false) {
+    AcleError createInputStreamDesc(std::shared_ptr<AclPacket> input, bool finish = false) {
       inputStreamDesc_ = acldvppCreateStreamDesc();
       if (inputStreamDesc_ == nullptr) {
         E_LOG("Create input stream desc failed");
-        return ACLLITE_ERROR_CREATE_STREAM_DESC;
+        return ACLE_ERROR_CREATE_STREAM_DESC;
       }
 
       aclError ret;
@@ -420,93 +412,93 @@ namespace acle {
       if (finish) {
         ret = acldvppSetStreamDescEos(inputStreamDesc_, 1);
         if (ret != ACL_SUCCESS) {
-          ACLLITE_LOG_ERROR("Set EOS to input stream desc failed, errorno:%d", ret);
-          return ACLLITE_ERROR_SET_STREAM_DESC_EOS;
+          E_LOG("Set EOS to input stream desc failed, error:{}", ret);
+          return ACLE_ERROR_SET_STREAM_DESC_EOS;
         }
-        return ACLLITE_OK;
+        return ACLE_OK;
       }
 
       if (!input->data) {
         E_LOG("[Decoder::createInputStreamDesc] input data is nullptr");
-        return ACLLITE_ERROR_VDEC_INVALID_PARAM;
+        return ACLE_ERROR_VDEC_INVALID_PARAM;
       }
 
       ret = acldvppSetStreamDescData(inputStreamDesc_, input->data);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set input stream data failed, errorno:{}", ret);
-        return ACLLITE_ERROR_SET_STREAM_DESC_DATA;
+        return ACLE_ERROR_SET_STREAM_DESC_DATA;
       }
 
       // set size for dvpp stream desc
       ret = acldvppSetStreamDescSize(inputStreamDesc_, input->size);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set input stream size failed, errorno:{}", ret);
-        return ACLLITE_ERROR_SET_STREAM_DESC_SIZE;
+        return ACLE_ERROR_SET_STREAM_DESC_SIZE;
       }
 
       acldvppSetStreamDescTimestamp(inputStreamDesc_, input->pts);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError createOutputPicDesc(size_t size) {
+    AcleError createOutputPicDesc(size_t size) {
       aclError ret = acldvppMalloc(&outputPicBuf_, size);
       if (ret != ACL_SUCCESS) {
         E_LOG("Malloc vdec output buffer failed when create "
           "vdec output desc, errorno:{}", ret);
-        return ACLLITE_ERROR_MALLOC_DVPP;
+        return ACLE_ERROR_MALLOC_DVPP;
       }
 
       outputPicDesc_ = acldvppCreatePicDesc();
       if (outputPicDesc_ == nullptr) {
         E_LOG("Create vdec output pic desc failed");
-        return ACLLITE_ERROR_CREATE_PIC_DESC;
+        return ACLE_ERROR_CREATE_PIC_DESC;
       }
 
       ret = acldvppSetPicDescData(outputPicDesc_, outputPicBuf_);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic desc data failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_PIC_DESC_DATA;
+        return ACLE_ERROR_SET_PIC_DESC_DATA;
       }
 
       ret = acldvppSetPicDescSize(outputPicDesc_, size);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic size failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_PIC_DESC_SIZE;
+        return ACLE_ERROR_SET_PIC_DESC_SIZE;
       }
 
       ret = acldvppSetPicDescWidth(outputPicDesc_, decodeCtx.width);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic width failed, error:{}", ret);
-        return ACLLITE_ERROR_VDEC_SET_WIDTH;
+        return ACLE_ERROR_VDEC_SET_WIDTH;
       }
 
       ret = acldvppSetPicDescHeight(outputPicDesc_, decodeCtx.height);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic height failed, error:{}", ret);
-        return ACLLITE_ERROR_VDEC_SET_HEIGHT;
+        return ACLE_ERROR_VDEC_SET_HEIGHT;
       }
 
       ret = acldvppSetPicDescWidthStride(outputPicDesc_, alignWidth_);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic widthStride failed, error:{}", ret);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       ret = acldvppSetPicDescHeightStride(outputPicDesc_, alignHeight_);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic heightStride failed, error:{}", ret);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       ret = acldvppSetPicDescFormat(outputPicDesc_, decodeCtx.format);
       if (ret != ACL_SUCCESS) {
         E_LOG("Set vdec output pic format failed, error:{}", ret);
-        return ACLLITE_ERROR_SET_PIC_DESC_FORMAT;
+        return ACLE_ERROR_SET_PIC_DESC_FORMAT;
       }
 
-      return ACLLITE_OK;
-      return ACLLITE_OK;
+      return ACLE_OK;
+      return ACLE_OK;
     }
 
     void unsubscribReportThread() {
@@ -578,7 +570,7 @@ namespace acle {
         outFp_ = fopen(encodeCtx.file.c_str(), "wb+");
         if (outFp_ == nullptr) {
           E_LOG("[Encoder::open] Open file {} failed, error={}", encodeCtx.file, strerror(errno));
-          return ACLLITE_ERROR_OPEN_FILE;
+          return ACLE_ERROR_OPEN_FILE;
         }
       }
       
@@ -591,14 +583,14 @@ namespace acle {
       bool flag = false;
 
       if (vencFrameConfig_) {
-        AclLiteError ret = setFrameConfig(1, 0);
-        if (ret != ACLLITE_OK) {
+        AcleError ret = setFrameConfig(1, 0);
+        if (ret != ACLE_OK) {
           W_LOG("[Encoder::close] Set frame config failed, error={}", ret);
         }
       }
 
       if (vencChannelDesc_) {
-        AclLiteError ret = aclvencSendFrame(vencChannelDesc_, nullptr,
+        AcleError ret = aclvencSendFrame(vencChannelDesc_, nullptr,
           nullptr, vencFrameConfig_, nullptr);
         if (ret != ACL_SUCCESS) {
           W_LOG("[Encoder::close] fail to send eos frame, ret={}", ret);
@@ -656,8 +648,8 @@ namespace acle {
     }
 
     int writeFrame(const AclFrame& input, AclPacket& packet, bool keyFrame = false) {
-      AclLiteError ret = createInputPicDesc(input);
-      if (ret != ACLLITE_OK) {
+      AcleError ret = createInputPicDesc(input);
+      if (ret != ACLE_OK) {
         E_LOG("[Encoder::writeFrame] fail to create picture description");
         return -1;
       }
@@ -683,8 +675,8 @@ namespace acle {
     }
 
   private:
-    AclLiteError saveVencFile(void* vencData, uint32_t size) {
-      AclLiteError atlRet = ACLLITE_OK;
+    AcleError saveVencFile(void* vencData, uint32_t size) {
+      AcleError atlRet = ACLE_OK;
       void* data = vencData;
       if (encodeCtx.runMode == ACL_HOST) {
         data = copyDataToHost(vencData, size, encodeCtx.runMode, NORMAL);
@@ -694,7 +686,7 @@ namespace acle {
         E_LOG("[Encoder::saveVencFile] Save venc file {} failed, need write {} bytes, "
           "but only write {} bytes, error: {}",
           encodeCtx.file, size, ret, strerror(errno));
-        atlRet = ACLLITE_ERROR_WRITE_FILE;
+        atlRet = ACLE_ERROR_WRITE_FILE;
       }
       else {
         fflush(outFp_);
@@ -751,21 +743,21 @@ namespace acle {
       return nullptr;
     }
 
-    AclLiteError createVencChannel() {
+    AcleError createVencChannel() {
       vencChannelDesc_ = aclvencCreateChannelDesc();
       if (vencChannelDesc_ == nullptr) {
         E_LOG("[Encoder::createVencChannel] Create venc channel desc failed");
-        return ACLLITE_ERROR_CREATE_VENC_CHAN_DESC;
+        return ACLE_ERROR_CREATE_VENC_CHAN_DESC;
       }
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_THREAD_ID_UINT64, 8, &threadId_);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_CALLBACK_PTR, 8, &callback);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_ENCODE_TYPE_UINT32, 4, &encodeCtx.enType);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_PIXEL_FORMAT_UINT32, 4, &encodeCtx.format);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_PIC_WIDTH_UINT32, 4, &encodeCtx.width);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_PIC_HEIGHT_UINT32, 4, &encodeCtx.height);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_KEY_FRAME_INTERVAL_UINT32, 4, &encodeCtx.gopSize);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_RC_MODE_UINT32, 4, &encodeCtx.rcMode);
-      //aclvencSetChannelDescParam(vencChannelDesc_, ACL_VENC_MAX_BITRATE_UINT32, 4, &encodeCtx.maxBitrate);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_THREAD_ID_UINT64, 8, &threadId_);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_CALLBACK_PTR, 8, &callback);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_ENCODE_TYPE_UINT32, 4, &encodeCtx.enType);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_PIXEL_FORMAT_UINT32, 4, &encodeCtx.format);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_PIC_WIDTH_UINT32, 4, &encodeCtx.width);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_PIC_HEIGHT_UINT32, 4, &encodeCtx.height);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_KEY_FRAME_INTERVAL_UINT32, 4, &encodeCtx.gopSize);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_RC_MODE_UINT32, 4, &encodeCtx.rcMode);
+      //aclvencSetChannelDescParam(vencChannelDesc_, ACLE_VENC_MAX_BITRATE_UINT32, 4, &encodeCtx.maxBitrate);
       aclvencSetChannelDescThreadId(vencChannelDesc_, threadId_);
       aclvencSetChannelDescCallback(vencChannelDesc_, callback);
       aclvencSetChannelDescEnType(vencChannelDesc_, encodeCtx.enType);
@@ -779,29 +771,29 @@ namespace acle {
       aclError ret = aclvencCreateChannel(vencChannelDesc_);
       if (ret != ACL_SUCCESS) {
         E_LOG("[Encoder::createVencChannel] fail to create venc channel, error={}", ret);
-        return ACLLITE_ERROR_CREATE_VENC_CHAN;
+        return ACLE_ERROR_CREATE_VENC_CHAN;
       }
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError createFrameConfig() {
+    AcleError createFrameConfig() {
       vencFrameConfig_ = aclvencCreateFrameConfig();
       if (vencFrameConfig_ == nullptr) {
         E_LOG("[Encoder::createFrameConfig] Create frame config failed");
-        return ACLLITE_ERROR_VENC_CREATE_FRAME_CONFIG;
+        return ACLE_ERROR_VENC_CREATE_FRAME_CONFIG;
       }
 
-      AclLiteError ret = setFrameConfig(0, 1);
-      if (ret != ACLLITE_OK) {
+      AcleError ret = setFrameConfig(0, 1);
+      if (ret != ACLE_OK) {
         E_LOG("[Encoder::createFrameConfig] Set frame config failed, error={}", ret);
         return ret;
       }
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError createInputPicDesc(const AclFrame& frame) {
+    AcleError createInputPicDesc(const AclFrame& frame) {
       if (inputPicDesc_) {
         void* data = acldvppGetPicDescData(inputPicDesc_);
         if (data) {
@@ -814,7 +806,7 @@ namespace acle {
       if (!inputPicDesc_) inputPicDesc_ = acldvppCreatePicDesc();
       if (inputPicDesc_ == nullptr) {
         E_LOG("[Encoder::createInputPicDesc] Create input pic desc failed");
-        return ACLLITE_ERROR_CREATE_PIC_DESC;
+        return ACLE_ERROR_CREATE_PIC_DESC;
       }
       void* inBufferDev_ = nullptr;
       uint32_t inBufferSize_ = frame.size;
@@ -845,23 +837,23 @@ namespace acle {
       acldvppSetPicDescData(inputPicDesc_, inBufferDev_);
       acldvppSetPicDescSize(inputPicDesc_, frame.size);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError setFrameConfig(uint8_t eos, uint8_t forceIFrame) {
-      if (!vencFrameConfig_) return ACLLITE_ERROR_INVALID_ARGS;
+    AcleError setFrameConfig(uint8_t eos, uint8_t forceIFrame) {
+      if (!vencFrameConfig_) return ACLE_ERROR_INVALID_ARGS;
       /* 设置是否为结束帧，0：不是，1：是结束帧 <Ambert May-21-2024> */
       aclError ret = aclvencSetFrameConfigEos(vencFrameConfig_, eos);
       if (ret != ACL_SUCCESS) {
         E_LOG("[Encoder::setFrameConfig] fail to set eos, ret={}", ret);
-        return ACLLITE_ERROR_VENC_SET_EOS;
+        return ACLE_ERROR_VENC_SET_EOS;
       }
 
       /* 设置是否强制重新开启I帧间隔，0：不强制，1：强制 <Ambert May-21-2024> */
       ret = aclvencSetFrameConfigForceIFrame(vencFrameConfig_, forceIFrame);
       if (ret != ACL_SUCCESS) {
         E_LOG("[Encoder::setFrameConfig] fail to set venc ForceIFrame");
-        return ACLLITE_ERROR_VENC_SET_IF_FRAME;
+        return ACLE_ERROR_VENC_SET_IF_FRAME;
       }
     }
 
@@ -875,21 +867,21 @@ namespace acle {
         return false;
       }
 
-      AclLiteError ret = pthread_create(&threadId_, nullptr,
+      AcleError ret = pthread_create(&threadId_, nullptr,
         notifyCallbackFunc, (void*)this);
-      if (ret != ACLLITE_OK) {
+      if (ret != ACLE_OK) {
         E_LOG("[Encoder::initResource] Create notify callback thread failed, errorCode={}", ret);
         return false;
       }
 
       ret = createVencChannel();
-      if (ret != ACLLITE_OK) {
+      if (ret != ACLE_OK) {
         E_LOG("[Encoder::initResource] Create venc channel failed, errorCode={}", ret);
         return false;
       }
 
       ret = createFrameConfig();
-      if (ret != ACLLITE_OK) {
+      if (ret != ACLE_OK) {
         E_LOG("[Encoder::initResource] Create venc frame config failed, errorCode={}", ret);
         return false;
       }
@@ -988,7 +980,7 @@ namespace acle {
 
         // check initialize bsf contextreult
         if (av_bsf_init(bsfCtx) < 0) {
-          ACLLITE_LOG_ERROR("Fail to call av_bsf_init!");
+          E_LOG("Fail to call av_bsf_init!");
           return false;
         }
       }
@@ -1422,7 +1414,7 @@ namespace acle {
       aclError aclRet = aclrtCreateStream(&stream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageReader::open] Create venc stream failed, error={}", aclRet);
-        return ACLLITE_ERROR_CREATE_STREAM;
+        return ACLE_ERROR_CREATE_STREAM;
       }
 
       aclrtGetRunMode(&runMode);
@@ -1430,7 +1422,7 @@ namespace acle {
       channelDesc = acldvppCreateChannelDesc();
       if (channelDesc == nullptr) {
         E_LOG("[ImageReader::open] Create dvpp channel desc failed");
-        return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
+        return ACLE_ERROR_CREATE_DVPP_CHANNEL_DESC;
       }
 
       //auto socVersion = aclrtGetSocName();
@@ -1446,12 +1438,12 @@ namespace acle {
       aclRet = acldvppCreateChannel(channelDesc);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::open] acldvppCreateChannel failed, aclRet={}", aclRet);
-        return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
+        return ACLE_ERRROR_CREATE_DVPP_CHANNEL;
       }
 
       I_LOG("[ImageReader::open] init resource success");
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     void close() {
@@ -1480,12 +1472,12 @@ namespace acle {
       isClose = true;
     }
 
-    AclLiteError imgread(const std::string& file, AclImage& data) {
+    AcleError imgread(const std::string& file, AclFrame& data) {
       return imgreadHandle(file, data);
     }
 
-    AclImage imgread(const std::string& file) {
-      AclImage img;
+    AclFrame imgread(const std::string& file) {
+      AclFrame img;
       imgreadHandle(file, img);
       return img;
     }
@@ -1604,80 +1596,82 @@ namespace acle {
       return inBufferDev;
     }
 
-    AclLiteError initDecodeOutputDesc(const PicDesc& pic, AclImage& inputImage) {
+    AcleError initDecodeOutputDesc(const PicDesc& pic, AclFrame& inputImage) {
       auto socVersion = aclrtGetSocName();
       if (strncmp(socVersion, "Ascend310P3", sizeof("Ascend310P3") - 1) == 0) {
         inputImage.width = ALIGN_UP2(pic.width);
         inputImage.height = ALIGN_UP2(pic.height);
-        inputImage.widthStride = ALIGN_UP64(pic.width); // 64-byte alignment
-        inputImage.heightStride = ALIGN_UP16(pic.height); // 16-byte alignment
+        inputImage.alignWidth = ALIGN_UP64(pic.width); // 64-byte alignment
+        inputImage.alignHeight = ALIGN_UP16(pic.height); // 16-byte alignment
       }
       else {
         inputImage.width = pic.width;
         inputImage.height = pic.height;
-        inputImage.widthStride = ALIGN_UP128(pic.width); // 128-byte alignment
-        inputImage.heightStride = ALIGN_UP16(pic.height); // 16-byte alignment
+        inputImage.alignWidth = ALIGN_UP128(pic.width); // 128-byte alignment
+        inputImage.alignHeight = ALIGN_UP16(pic.height); // 16-byte alignment
       }
-      if (inputImage.widthStride == 0 || inputImage.heightStride == 0) {
+      if (inputImage.alignWidth == 0 || inputImage.alignHeight == 0) {
         E_LOG("Input image width {} or height {} invalid",
           inputImage.width, inputImage.height);
-        return ACLLITE_ERROR_INVALID_ARGS;
+        return ACLE_ERROR_INVALID_ARGS;
       }
 
       inputImage.format = checkJpegFormat(pic.format);
       inputImage.size = pic.jpegDecodeSize;
-      aclError aclRet = acldvppMalloc(&inputImage.data, inputImage.size);
+      void* data = nullptr;
+      aclError aclRet = acldvppMalloc(&data, inputImage.size);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("Malloc dvpp memory failed, error:{}", aclRet);
-        return ACLLITE_ERROR_MALLOC_DVPP;
+        return ACLE_ERROR_MALLOC_DVPP;
       }
 
       outputPicDesc = acldvppCreatePicDesc();
       if (outputPicDesc == nullptr) {
         E_LOG("Create dvpp pic desc failed");
-        return ACLLITE_ERROR_CREATE_PIC_DESC;
+        return ACLE_ERROR_CREATE_PIC_DESC;
       }
+      inputImage.data = SHARED_PTR_DVPP_BUF(data);
 
-      acldvppSetPicDescData(outputPicDesc, inputImage.data);
+      acldvppSetPicDescData(outputPicDesc, inputImage.data.get());
       acldvppSetPicDescFormat(outputPicDesc, inputImage.format);
       acldvppSetPicDescWidth(outputPicDesc, inputImage.width);
       acldvppSetPicDescHeight(outputPicDesc, inputImage.height);
-      acldvppSetPicDescWidthStride(outputPicDesc, inputImage.widthStride);
-      acldvppSetPicDescHeightStride(outputPicDesc, inputImage.heightStride);
+      acldvppSetPicDescWidthStride(outputPicDesc, inputImage.alignWidth);
+      acldvppSetPicDescHeightStride(outputPicDesc, inputImage.alignHeight);
       acldvppSetPicDescSize(outputPicDesc, inputImage.size);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError imgreadHandle(const std::string& file, AclImage& dest) {
+    AcleError imgreadHandle(const std::string& file, AclFrame& dest) {
       PicDesc pic = { file, 0, 0 };
       uint32_t picDevBufferSize = 0;
       void* picDevBuffer = loadImageInBuffer(pic, picDevBufferSize);
       if (picDevBuffer == nullptr) {
         E_LOG("get pic device buffer failed,index is 0");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
-      AclLiteError ret = initDecodeOutputDesc(pic, dest);
+      AcleError ret = initDecodeOutputDesc(pic, dest);
       if (ret != ACL_SUCCESS) {
         E_LOG("init jpg decode output source failed, ret={}", ret);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       ret = acldvppJpegDecodeAsync(channelDesc, picDevBuffer, picDevBufferSize,
         outputPicDesc, stream_);
       if (ret != ACL_SUCCESS) {
         E_LOG("acldvppJpegDecodeAsync failed, ret={}", ret);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       ret = aclrtSynchronizeStream(stream_);
       if (ret != ACL_SUCCESS) {
         E_LOG("aclrtSynchronizeStream failed");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     aclrtRunMode runMode;
@@ -1700,7 +1694,7 @@ namespace acle {
       aclError aclRet = aclrtCreateStream(&stream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::open] Create venc stream failed, error={}", aclRet);
-        return ACLLITE_ERROR_CREATE_STREAM;
+        return ACLE_ERROR_CREATE_STREAM;
       }
 
       aclrtGetRunMode(&runMode);
@@ -1708,7 +1702,7 @@ namespace acle {
       channelDesc = acldvppCreateChannelDesc();
       if (channelDesc == nullptr) {
         E_LOG("[ImageHandler::open] Create dvpp channel desc failed");
-        return ACLLITE_ERROR_CREATE_DVPP_CHANNEL_DESC;
+        return ACLE_ERROR_CREATE_DVPP_CHANNEL_DESC;
       }
 
       //auto socVersion = aclrtGetSocName();
@@ -1724,12 +1718,12 @@ namespace acle {
       aclRet = acldvppCreateChannel(channelDesc);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::open] acldvppCreateChannel failed, aclRet={}", aclRet);
-        return ACLLITE_ERRROR_CREATE_DVPP_CHANNEL;
+        return ACLE_ERRROR_CREATE_DVPP_CHANNEL;
       }
 
       I_LOG("[ImageHandler::open] init resource success");
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     void close() {
@@ -1755,28 +1749,42 @@ namespace acle {
       isClose = true;
     }
 
-    AclLiteError resize(const AclFrame& src, AclFrame& dest, uint32_t width, uint32_t height) {
+    AcleError resize(const AclFrame& src, AclFrame& dest, uint32_t width, uint32_t height) {
       if (src.width == width || src.height == height) {
         E_LOG("[ImageHandler::resize] src width={}, height={} equal to target size", src.width, src.height);
-        return ACLLITE_ERROR_DEST_INVALID;
+        return ACLE_ERROR_DEST_INVALID;
       }
       size_.width = width;
       size_.height = height;
-      AclLiteError ret = resizeExecute(src, dest);
+      AcleError ret = resizeExecute(src, dest);
       return ret;
     }
 
-    AclLiteError crop(AclImage& src1, AclImage& dest, uint32_t targetX, uint32_t targetY,
+    AcleError crop(AclFrame& src, AclFrame& dest, uint32_t targetX, uint32_t targetY,
       uint32_t width , uint32_t height) {
-      AclLiteError ret = cropHandle(src1, dest, targetX, targetY, width, height);
+      width = (width / 16) * 16;
+      if (width <= 16) return ACLE_ERROR;
+      if (targetX < 0 || targetY < 0) {
+        E_LOG("[ImageHandler::crop] input crop x={} y={} failed", targetX, targetY);
+        return ACLE_ERROR;
+      }
+      if (targetX + width > src.width || targetY + height > src.height) {
+        E_LOG("[ImageHandler::crop] input crop x={} + width={} ? src width={} "
+          "and y={} + height={} ? src height={} failed", targetX, width, src.width, targetY, height, src.height);
+        return ACLE_ERROR;
+      }
+      cropOutSize_.width = width;
+      cropOutSize_.height = height;
+      AcleError ret = cropHandle(src, dest, targetX, targetY, width, height);
       return ret;
     }
 
-    AclLiteError overlay(const AclImage& src1, AclFrame& dest, uint32_t targetX, uint32_t targetY) {
+    AcleError overlay(const AclFrame& src1, AclFrame& dest, uint32_t targetX, uint32_t targetY) {
+      if (src1.width <= 16) return ACLE_ERROR;
       return pasteHandle(src1, dest, targetX, targetY);
     }
 
-    AclLiteError cvtColor(const AclImage& src, AclImage& dest) {
+    AcleError cvtColor(const AclImage& src, AclImage& dest) {
       return convertHandle(src, dest);
     }
 
@@ -1795,13 +1803,13 @@ namespace acle {
     }
 
     //缩放功能实现
-    AclLiteError initResizeInputDesc(const AclFrame& inputImage) {
+    AcleError initResizeInputDesc(const AclFrame& inputImage) {
       uint32_t alignWidth = inputImage.alignWidth;
       uint32_t alignHeight = inputImage.alignHeight;
       if (alignWidth == 0 || alignHeight == 0) {
         E_LOG("[ImageHandler::initResizeInputDesc] Input image width={} or height={} invalid",
           inputImage.width, inputImage.height);
-        return ACLLITE_ERROR_INVALID_ARGS;
+        return ACLE_ERROR_INVALID_ARGS;
       }
 
       uint32_t inputBufferSize = 0;
@@ -1820,7 +1828,7 @@ namespace acle {
       inputPicDesc = acldvppCreatePicDesc();
       if (!inputPicDesc) {
         E_LOG("[ImageHandler::initResizeInputDesc] Create dvpp pic desc failed");
-        return ACLLITE_ERROR_CREATE_PIC_DESC;
+        return ACLE_ERROR_CREATE_PIC_DESC;
       }
 
       acldvppSetPicDescData(inputPicDesc, inputImage.data.get());
@@ -1831,10 +1839,10 @@ namespace acle {
       acldvppSetPicDescHeightStride(inputPicDesc, alignHeight);
       acldvppSetPicDescSize(inputPicDesc, inputBufferSize);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError initResizeOutputDesc() {
+    AcleError initResizeOutputDesc() {
       auto socVersion = aclrtGetSocName();
       char soc_name[11];
       strncpy(soc_name, socVersion, 10);
@@ -1851,7 +1859,7 @@ namespace acle {
       if (resizeOutWidthStride == 0 || resizeOutHeightStride == 0) {
         E_LOG("[ImageHandler::initResizeOutputDesc] Align resize width({}) and height({}) failed",
           size_.width, size_.height);
-        return ACLLITE_ERROR_INVALID_ARGS;
+        return ACLE_ERROR_INVALID_ARGS;
       }
 
       outDevBufSize = YUV420SP_SIZE(resizeOutWidthStride, resizeOutHeightStride);
@@ -1859,13 +1867,13 @@ namespace acle {
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::initResizeOutputDesc] Dvpp resize malloc output buffer failed, "
           "size={}, error={}", outDevBufSize, aclRet);
-        return ACLLITE_ERROR_MALLOC_DVPP;
+        return ACLE_ERROR_MALLOC_DVPP;
       }
 
       outputPicDesc = acldvppCreatePicDesc();
       if (!outputPicDesc) {
         E_LOG("[ImageHandler::initResizeOutputDesc] acldvppCreatePicDesc vpcOutputDesc_ failed");
-        return ACLLITE_ERROR_CREATE_PIC_DESC;
+        return ACLE_ERROR_CREATE_PIC_DESC;
       }
 
       acldvppSetPicDescData(outputPicDesc, outDevBuf);
@@ -1876,29 +1884,29 @@ namespace acle {
       acldvppSetPicDescHeightStride(outputPicDesc, resizeOutHeightStride);
       acldvppSetPicDescSize(outputPicDesc, outDevBufSize);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError initResizeResource(const AclFrame& inputImage) {
+    AcleError initResizeResource(const AclFrame& inputImage) {
       resizeConfig_ = acldvppCreateResizeConfig();
       if (resizeConfig_ == nullptr) {
         E_LOG("[ImageHandler::initResizeResource] Dvpp resize init failed for create config failed");
-        return ACLLITE_ERROR_CREATE_RESIZE_CONFIG;
+        return ACLE_ERROR_CREATE_RESIZE_CONFIG;
       }
 
-      AclLiteError ret = initResizeInputDesc(inputImage);
-      if (ret != ACLLITE_OK) {
+      AcleError ret = initResizeInputDesc(inputImage);
+      if (ret != ACLE_OK) {
         E_LOG("[ImageHandler::initResizeResource] InitResizeInputDesc failed");
         return ret;
       }
 
       ret = initResizeOutputDesc();
-      if (ret != ACLLITE_OK) {
+      if (ret != ACLE_OK) {
         E_LOG("[ImageHandler::initResizeResource] InitResizeOutputDesc failed");
         return ret;
       }
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     void destroyResizeResource() {
@@ -1910,10 +1918,10 @@ namespace acle {
       destoryResource();
     }
 
-    AclLiteError resizeExecute(const AclFrame& srcImage, AclFrame& resizedImage) {
-      AclLiteError atlRet = initResizeResource(srcImage);
-      if (atlRet != ACLLITE_OK) {
-        ACLLITE_LOG_ERROR("Dvpp resize failed for init error");
+    AcleError resizeExecute(const AclFrame& srcImage, AclFrame& resizedImage) {
+      AcleError atlRet = initResizeResource(srcImage);
+      if (atlRet != ACLE_OK) {
+        E_LOG("Dvpp resize failed for init error");
         return atlRet;
       }
 
@@ -1921,14 +1929,14 @@ namespace acle {
       aclError aclRet = acldvppVpcResizeAsync(channelDesc, inputPicDesc,
         outputPicDesc, resizeConfig_, stream_);
       if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("acldvppVpcResizeAsync failed, error: %d", aclRet);
-        return ACLLITE_ERROR_RESIZE_ASYNC;
+        E_LOG("acldvppVpcResizeAsync failed, error:{}", aclRet);
+        return ACLE_ERROR_RESIZE_ASYNC;
       }
 
       aclRet = aclrtSynchronizeStream(stream_);
       if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("resize aclrtSynchronizeStream failed, error: %d", aclRet);
-        return ACLLITE_ERROR_SYNC_STREAM;
+        E_LOG("resize aclrtSynchronizeStream failed, error:{}", aclRet);
+        return ACLE_ERROR_SYNC_STREAM;
       }
       resizedImage.format = PIXEL_FORMAT_YUV_SEMIPLANAR_420;
       char soc_name[11];
@@ -1951,21 +1959,27 @@ namespace acle {
 
       destroyResizeResource();
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     //裁剪/叠加功能实现
 
     //裁剪/叠加功能输入图片描述初始化
-    AclLiteError initCropOrPasteInputDesc(const AclImage& inputImage) {
-      //uint32_t alignWidth = ALIGN_UP16(inputImage.width);
-      //uint32_t alignHeight = ALIGN_UP2(inputImage.height);
-      uint32_t alignWidth = inputImage.widthStride;
-      uint32_t alignHeight = inputImage.heightStride;
+    AcleError initCropOrPasteInputDesc(const AclFrame& inputImage) {
+      uint32_t alignWidth = 0;
+      uint32_t alignHeight = 0;
+      if (inputImage.format == PIXEL_FORMAT_BGR_888) {
+        alignWidth = ALIGN_UP16(inputImage.width) * 3;
+        alignHeight = ALIGN_UP2(inputImage.height);
+      }
+      else if (inputImage.format == PIXEL_FORMAT_YUV_SEMIPLANAR_420) {
+        alignWidth = ALIGN_UP16(inputImage.width);
+        alignHeight = ALIGN_UP2(inputImage.height);
+      }
       if (alignWidth == 0 || alignHeight == 0) {
         E_LOG("Invalid image parameters, width={}, height={}",
           inputImage.width, inputImage.height);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       //uint32_t inputBufferSize = 0;
@@ -1977,43 +1991,43 @@ namespace acle {
       //}
       //else {
       //  E_LOG("Dvpp only support yuv and rgb format.");
-      //  return ACLLITE_ERROR;
+      //  return ACLE_ERROR;
       //}
 
       if (inputImage.data == nullptr) {
         E_LOG("input image data is nullptr");
         acldvppFree(inputBuffer);
         inputBuffer = nullptr;
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       if (inputImage.size == 0) {
         E_LOG("input image size {}", inputImage.size);
         acldvppFree(inputBuffer);
         inputBuffer = nullptr;
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       //aclError ret = acldvppMalloc(&inputBuffer, inputImage.size);
       //ret = aclrtMemcpy(inputBuffer, inputImage.size, inputImage.data, inputImage.size,
-      //  ACL_MEMCPY_DEVICE_TO_DEVICE); 
+      //  ACLE_MEMCPY_DEVICE_TO_DEVICE); 
       //if (ret != ACL_SUCCESS) {
       //  E_LOG("memcpy failed. raw size is {}, Input buffer size is {}, ret={}",
       //    inputImage.size, inputImage.size, ret);
       //  acldvppFree(inputBuffer);
       //  inputBuffer = nullptr;
-      //  return ACLLITE_ERROR;
+      //  return ACLE_ERROR;
       //}
 
       inputPicDesc = acldvppCreatePicDesc();
       if (inputPicDesc == nullptr) {
         E_LOG("Dvpp crop create pic desc failed");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
       D_LOG("paste w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, alignWidth, alignHeight, inputImage.format, inputImage.size);
 
-      acldvppSetPicDescData(inputPicDesc, inputImage.data);
+      acldvppSetPicDescData(inputPicDesc, inputImage.data.get());
       acldvppSetPicDescFormat(inputPicDesc, inputImage.format);
       acldvppSetPicDescWidth(inputPicDesc, inputImage.width);
       acldvppSetPicDescHeight(inputPicDesc, inputImage.height);
@@ -2021,71 +2035,72 @@ namespace acle {
       acldvppSetPicDescHeightStride(inputPicDesc, alignHeight);
       acldvppSetPicDescSize(inputPicDesc, inputImage.size);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     //裁剪输出图片描述初始化
-    AclLiteError initCropOutputDesc(AclImage& inputImage) {
-      int outWidth = cropOutSize_.width;
-      int outHeight = cropOutSize_.height;
-      int outWidthStride = ALIGN_UP16(outWidth);
-      int outHeightStride = ALIGN_UP2(outHeight);
-      if (outWidthStride == 0 || outHeightStride == 0) {
-        ACLLITE_LOG_ERROR("Crop image align widht(%d) and height(%d) failed",
-          cropOutSize_.width, cropOutSize_.height);
-        return ACLLITE_ERROR;
+    AcleError initCropOutputDesc(AclFrame& inputImage) {
+      inputImage.width = cropOutSize_.width;
+      inputImage.height = cropOutSize_.height;
+      inputImage.alignWidth = ALIGN_UP16(inputImage.width);
+      inputImage.alignHeight = ALIGN_UP2(inputImage.height);
+      inputImage.format = PIXEL_FORMAT_YUV_SEMIPLANAR_420;
+      if (inputImage.alignWidth == 0 || inputImage.alignHeight == 0) {
+        E_LOG("[ImageHandler::initCropOutputDesc] image width={} and height={} failed",
+          inputImage.width, inputImage.height);
+        return ACLE_ERROR;
       }
 
-      outDevBufSize = YUV420SP_SIZE(outWidthStride,
-        outHeightStride);
-      aclError aclRet = acldvppMalloc(&inputImage.data, outDevBufSize);
+      inputImage.size = YUV420SP_SIZE(inputImage.alignWidth, inputImage.alignHeight);
+      void* data = nullptr;
+      aclError aclRet = acldvppMalloc(&data, inputImage.size);
       if (aclRet != ACL_SUCCESS) {
-        ACLLITE_LOG_ERROR("Dvpp crop malloc output memory failed, crop "
-          "width %d, height %d size %d, error %d",
-          cropOutSize_.width, cropOutSize_.height,
-          outDevBufSize, aclRet);
-        return ACLLITE_ERROR;
+        E_LOG("[ImageHandler::initCropOutputDesc] Dvpp crop malloc output memory failed, crop "
+          "width={}, height={} size={}, error={}",
+          cropOutSize_.width, cropOutSize_.height, inputImage.size, aclRet);
+        return ACLE_ERROR;
       }
-      aclrtMemset(outDevBuf, outDevBufSize, 0, outDevBufSize);
+      aclrtMemset(data, inputImage.size, 0, inputImage.size);
       outputPicDesc = acldvppCreatePicDesc();
       if (outputPicDesc == nullptr) {
-        ACLLITE_LOG_ERROR("Dvpp crop create pic desc failed");
-        return ACLLITE_ERROR;
+        E_LOG("Dvpp crop create pic desc failed");
+        return ACLE_ERROR;
       }
-      acldvppSetPicDescData(outputPicDesc, outDevBuf);
-      acldvppSetPicDescFormat(outputPicDesc, PIXEL_FORMAT_YUV_SEMIPLANAR_420);
-      acldvppSetPicDescWidth(outputPicDesc, outWidth);
-      acldvppSetPicDescHeight(outputPicDesc, outHeight);
-      acldvppSetPicDescWidthStride(outputPicDesc, outWidthStride);
-      acldvppSetPicDescHeightStride(outputPicDesc, outHeightStride);
-      acldvppSetPicDescSize(outputPicDesc, outDevBufSize);
+      inputImage.data = SHARED_PTR_DVPP_BUF(data);
+      acldvppSetPicDescData(outputPicDesc, inputImage.data.get());
+      acldvppSetPicDescFormat(outputPicDesc, inputImage.format);
+      acldvppSetPicDescWidth(outputPicDesc, inputImage.width);
+      acldvppSetPicDescHeight(outputPicDesc, inputImage.height);
+      acldvppSetPicDescWidthStride(outputPicDesc, inputImage.alignWidth);
+      acldvppSetPicDescHeightStride(outputPicDesc, inputImage.alignHeight);
+      acldvppSetPicDescSize(outputPicDesc, inputImage.size);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     //叠加输出图片描述初始化
-    AclLiteError initPasteOutputDesc(AclFrame& inputImage) {
+    AcleError initPasteOutputDesc(AclFrame& inputImage) {
       uint32_t widthStride = ALIGN_UP16(inputImage.width);
       uint32_t heightStride = ALIGN_UP2(inputImage.height);
       if (!inputImage.data) {
         E_LOG("[ImageHandler::initPasteOutputDesc] bottom img can not be nullptr");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
       
       if (inputImage.size == 0) {
         E_LOG("[ImageHandler::initPasteOutputDesc] bottom img size can not be zero");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       if (inputImage.width == 0 || inputImage.height == 0) {
         E_LOG("[ImageHandler::initPasteOutputDesc] bottom img width({}) and height({}) is invaild",
           inputImage.width, inputImage.height);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       uint32_t outputBufferSize = YUV420SP_SIZE(widthStride, heightStride);
       //auto aclRet = acldvppMalloc(&outputBuffer, outputBufferSize);
-      //aclRet = aclrtMemcpy(outputBuffer, outputBufferSize, inputImage.data.get(), inputImage.size, ACL_MEMCPY_DEVICE_TO_DEVICE);
+      //aclRet = aclrtMemcpy(outputBuffer, outputBufferSize, inputImage.data.get(), inputImage.size, ACLE_MEMCPY_DEVICE_TO_DEVICE);
       //if (aclRet != ACL_SUCCESS) {
       //  E_LOG("acl memcpy data to dev failed, image.size={}, ret={}", outputBufferSize, aclRet);
       //  (void)acldvppFree(outputBuffer);
@@ -2097,8 +2112,8 @@ namespace acle {
 
       outputPicDesc = acldvppCreatePicDesc();
       if (outputPicDesc == nullptr) {
-        ACLLITE_LOG_ERROR("Dvpp crop create pic desc failed");
-        return ACLLITE_ERROR;
+        E_LOG("Dvpp crop create pic desc failed");
+        return ACLE_ERROR;
       }
       acldvppSetPicDescData(outputPicDesc, inputImage.data.get());
       acldvppSetPicDescFormat(outputPicDesc, inputImage.format);
@@ -2108,7 +2123,7 @@ namespace acle {
       acldvppSetPicDescHeightStride(outputPicDesc, inputImage.alignHeight);
       acldvppSetPicDescSize(outputPicDesc, inputImage.size);
 
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     void destroyCropOrPasteResource() {
@@ -2133,78 +2148,74 @@ namespace acle {
       destoryResource();
     }
 
-    AclLiteError cropHandle(const AclImage& topImg, AclImage& destImg,
+    AcleError cropHandle(AclFrame& topImg, AclFrame& destImg,
       uint32_t targetX, uint32_t targetY, uint32_t width, uint32_t height) {
       //初始化输入图片信息描述
-      if (initCropOrPasteInputDesc(topImg) != ACLLITE_OK) {
-        return ACLLITE_ERROR;
+      if (initCropOrPasteInputDesc(topImg) != ACLE_OK) {
+        return ACLE_ERROR;
       }
-
-      //若右偏移或下偏移大于被贴对象的宽度或高度，则需要裁剪
       //计算裁剪ROI区域
       //必须为偶数
-      uint32_t cropLeftOffset = 0; //相对输入图片的左偏移
-      uint32_t cropTopOffset = 0; //相对输入图片的上偏移
-
+      uint32_t cropLeftOffset = targetX - (targetX & 1); //相对输入图片的左偏移
+      uint32_t cropTopOffset = targetY - (targetY & 1); //相对输入图片的上偏移
       //必须为奇数
-      uint32_t cropRightOffset = topImg.width - ((topImg.width & 1) ^ 1);  //相对输入图片的右偏移
-      uint32_t cropBottomOffset = topImg.height - ((topImg.height & 1) ^ 1); //相对输入图片的下偏移
+      uint32_t cropRightOffset = (targetX + width) - (((targetX + width) & 1) ^ 1);  //相对输入图片的右偏移
+      uint32_t cropBottomOffset = (targetY + height) - (((targetY + height) & 1) ^ 1); //相对输入图片的下偏移
 
       //设置输入图片裁剪的ROI区域
       cropArea_ = acldvppCreateRoiConfig(cropLeftOffset, cropRightOffset,
         cropTopOffset, cropBottomOffset);
       if (cropArea_ == nullptr) {
-        E_LOG("acldvppCreateRoiConfig cropArea_ failed");
-        return ACLLITE_ERROR;
+        E_LOG("[ImageHandler::cropHandle] acldvppCreateRoiConfig cropArea_ failed");
+        return ACLE_ERROR;
       }
 
       //初始化输出图片信息描述
-      if (initCropOutputDesc(destImg) != ACLLITE_OK) {
-        return ACLLITE_ERROR;
+      if (initCropOutputDesc(destImg) != ACLE_OK) {
+        return ACLE_ERROR;
       }
 
       //计算叠加ROI区域
       // 必须为偶数
       // 左偏移必须满足16对齐
-      uint32_t pasteLeftOffset = (targetX / 16) * 16;
-      uint32_t pasteTopOffset = targetY - (targetY & 1);
+      uint32_t pasteLeftOffset = 0;
+      uint32_t pasteTopOffset = 0;
 
       // 必须为奇数
-      uint32_t pasteRightOffset = pasteLeftOffset + topImg.width;
+      uint32_t pasteRightOffset = pasteLeftOffset + destImg.width;
       pasteRightOffset = pasteRightOffset - ((pasteRightOffset & 1) ^ 1);
-      uint32_t pasteBottomOffset = pasteTopOffset + topImg.height;
+      uint32_t pasteBottomOffset = pasteTopOffset + destImg.height;
       pasteBottomOffset = pasteBottomOffset - ((pasteBottomOffset & 1) ^ 1);
 
       pasteArea_ = acldvppCreateRoiConfig(pasteLeftOffset, pasteRightOffset,
         pasteTopOffset, pasteBottomOffset);
       if (pasteArea_ == nullptr) {
-        E_LOG("acldvppCreateRoiConfig pasteArea_ failed");
-        return ACLLITE_ERROR;
+        E_LOG("[ImageHandler::cropHandle] acldvppCreateRoiConfig pasteArea_ failed");
+        return ACLE_ERROR;
       }
 
       aclError aclRet = acldvppVpcCropAndPasteAsync(channelDesc, inputPicDesc,
         outputPicDesc, cropArea_, pasteArea_, stream_);
       if (aclRet != ACL_SUCCESS) {
-        E_LOG("[ImageHandler::pasteHandle] acldvppVpcCropAndPasteAsync failed, aclRet={}", aclRet);
-        return ACLLITE_ERROR;
+        E_LOG("[ImageHandler::cropHandle] acldvppVpcCropAndPasteAsync failed, aclRet={}", aclRet);
+        return ACLE_ERROR;
       }
 
       aclRet = aclrtSynchronizeStream(stream_);
       if (aclRet != ACL_SUCCESS) {
-        E_LOG("[ImageHandler::pasteHandle] use aclrtSynchronizeStream failed, aclRet={}", aclRet);
-        return ACLLITE_ERROR;
+        E_LOG("[ImageHandler::cropHandle] use aclrtSynchronizeStream failed, aclRet={}", aclRet);
+        return ACLE_ERROR;
       }
 
       destroyCropOrPasteResource();
 
-      return ACLLITE_OK;
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError pasteHandle(const AclImage& topImg, AclFrame& destImg, uint32_t targetX, uint32_t targetY) {
+    AcleError pasteHandle(const AclFrame& topImg, AclFrame& destImg, uint32_t targetX, uint32_t targetY) {
       //初始化输入图片信息描述
-      if (initCropOrPasteInputDesc(topImg) != ACLLITE_OK) {
-        return ACLLITE_ERROR;
+      if (initCropOrPasteInputDesc(topImg) != ACLE_OK) {
+        return ACLE_ERROR;
       }
 
       //若右偏移或下偏移大于被贴对象的宽度或高度，则需要裁剪
@@ -2222,12 +2233,12 @@ namespace acle {
         cropTopOffset, cropBottomOffset);
       if (cropArea_ == nullptr) {
         E_LOG("acldvppCreateRoiConfig cropArea_ failed");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       //初始化输出图片信息描述
-      if (initPasteOutputDesc(destImg) != ACLLITE_OK) {
-        return ACLLITE_ERROR;
+      if (initPasteOutputDesc(destImg) != ACLE_OK) {
+        return ACLE_ERROR;
       }
 
       //计算叠加ROI区域
@@ -2246,35 +2257,35 @@ namespace acle {
         pasteTopOffset, pasteBottomOffset);
       if (pasteArea_ == nullptr) {
         E_LOG("acldvppCreateRoiConfig pasteArea_ failed");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       aclError aclRet = acldvppVpcCropAndPasteAsync(channelDesc, inputPicDesc,
         outputPicDesc, cropArea_, pasteArea_, stream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::pasteHandle] acldvppVpcCropAndPasteAsync failed, aclRet={}", aclRet);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       aclRet = aclrtSynchronizeStream(stream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::pasteHandle] use aclrtSynchronizeStream failed, aclRet={}", aclRet);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       destroyCropOrPasteResource();
       
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
     //格式转换输入图片描述初始化
-    AclLiteError initConvertpicDesc(const AclImage& inputImage, AclImage& outputImage) {
+    AcleError initConvertpicDesc(const AclImage& inputImage, AclImage& outputImage) {
       uint32_t alignWidth = ALIGN_UP16(inputImage.width);
       uint32_t alignHeight = ALIGN_UP2(inputImage.height);
       if (alignWidth == 0 || alignHeight == 0) {
         E_LOG("Invalid image parameters, width={}, height={}",
           inputImage.width, inputImage.height);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       uint32_t inputBufferSize = 0;
@@ -2289,27 +2300,27 @@ namespace acle {
       }
       else {
         E_LOG("Dvpp only support yuv and rgb format.");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       if (inputImage.data == nullptr) {
         E_LOG("input image data is nullptr");
         acldvppFree(inputBuffer);
         inputBuffer = nullptr;
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       if (inputImage.size == 0) {
         E_LOG("input image size {}", inputImage.size);
         acldvppFree(inputBuffer);
         inputBuffer = nullptr;
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       inputPicDesc = acldvppCreatePicDesc();
       if (inputPicDesc == nullptr) {
         E_LOG("Dvpp crop create pic desc failed");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
       I_LOG("convert intput w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, alignWidth, alignHeight, inputImage.format, inputBufferSize);
@@ -2333,7 +2344,7 @@ namespace acle {
           "width {}, height {} size {}, error {}",
           cropOutSize_.width, cropOutSize_.height,
           outputBufferSize, aclRet);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
       outputImage.width = inputImage.width;
       outputImage.height = inputImage.height;
@@ -2344,8 +2355,8 @@ namespace acle {
 
       outputPicDesc = acldvppCreatePicDesc();
       if (outputPicDesc == nullptr) {
-        ACLLITE_LOG_ERROR("Dvpp crop create pic desc failed");
-        return ACLLITE_ERROR;
+        E_LOG("Dvpp crop create pic desc failed");
+        return ACLE_ERROR;
       }
       acldvppSetPicDescData(outputPicDesc, outputImage.data);
       acldvppSetPicDescFormat(outputPicDesc, PIXEL_FORMAT_YUV_SEMIPLANAR_420);
@@ -2354,24 +2365,24 @@ namespace acle {
       acldvppSetPicDescWidthStride(outputPicDesc, alignWidth);
       acldvppSetPicDescHeightStride(outputPicDesc, alignHeight);
       acldvppSetPicDescSize(outputPicDesc, outputBufferSize);
-      return ACLLITE_OK;
+      return ACLE_OK;
     }
 
-    AclLiteError convertHandle(const AclImage& src, AclImage& dest) {
-      if (initConvertpicDesc(src, dest) != ACLLITE_OK) {
+    AcleError convertHandle(const AclImage& src, AclImage& dest) {
+      if (initConvertpicDesc(src, dest) != ACLE_OK) {
         E_LOG("[ImageHandler::convertHandle] init input and output picdesc failed");
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       aclError aclRet = acldvppVpcConvertColorAsync(channelDesc, inputPicDesc, outputPicDesc, stream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::convertHandle] acldvppVpcConvertColorAsync failed, aclRet={}", aclRet);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
       aclRet = aclrtSynchronizeStream(stream_);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("[ImageHandler::convertHandle] aclrtSynchronizeStream failed, aclRet={}", aclRet);
-        return ACLLITE_ERROR;
+        return ACLE_ERROR;
       }
 
       destoryResource();
