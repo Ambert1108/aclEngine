@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
   int32_t deviceId = 1;
   std::string inputName = "/home/data/v2.mp4";
   std::string inputImage = "/home/data/cat.jpg";
-  std::string ip = "10.4.7.113";
+  std::string ip = "10.4.6.100";
   uint16_t port = 50104;
   int destWidth = 1280;
   int destHeight = 720;
