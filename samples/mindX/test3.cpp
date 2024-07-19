@@ -50,6 +50,10 @@ int main(int argc, char* argv[]) {
   {
     APP_ERROR result = APP_ERR_OK;
 
+    // MxInit已经包含了设备初始化等工作，无需单独设置
+    // MxInit的作用域需要大于图像处理操作
+    // 使用Tensor的ToDevice函数上传到设备上时，确认使用哪张卡
+
     //DeviceContext deviceContext_ = {};
     //result = DeviceManager::GetInstance()->InitDevices();
     //if (result != APP_ERR_OK) {
@@ -68,6 +72,7 @@ int main(int argc, char* argv[]) {
     //cv::Mat srcMatHost = cv::imread("top.png", cv::IMREAD_UNCHANGED);
     cv::Mat srcMatHost = cv::imread("21.png", cv::IMREAD_UNCHANGED);
     cv::cvtColor(srcMatHost, srcMatHost, cv::COLOR_BGRA2RGBA);
+    cv::resize(srcMatHost, srcMatHost, cv::Size(300, 300));
 
     I_LOG("load source picture success");
 
@@ -108,6 +113,10 @@ int main(int argc, char* argv[]) {
       E_LOG("upload bottom tensor to device failed");
       return -1;
     }
+
+    //在背景向量上选取roi区域作为叠加区域
+    Rect roi(100, 100, 100 + srcMatHost.cols, 100 + srcMatHost.rows);
+    imageTensor = Tensor(imageTensor, roi);
 
     I_LOG("upload background tensor success");
 
