@@ -65,7 +65,8 @@ int main(int argc, char* argv[]) {
     //I_LOG("init device {} success", deviceId);
 
     //加载素材图片
-    cv::Mat srcMatHost = cv::imread("bottom.png", cv::IMREAD_UNCHANGED);
+    //cv::Mat srcMatHost = cv::imread("top.png", cv::IMREAD_UNCHANGED);
+    cv::Mat srcMatHost = cv::imread("21.png", cv::IMREAD_UNCHANGED);
     cv::cvtColor(srcMatHost, srcMatHost, cv::COLOR_BGRA2RGBA);
 
     I_LOG("load source picture success");
