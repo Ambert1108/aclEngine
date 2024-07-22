@@ -31,14 +31,21 @@
 
 #define ALIGN_UP(num, align) (((num) + (align) - 1) & ~((align) - 1))
 
-std::vector<std::vector<float>> rotationMatrix(float angle) {
+template<typename T>
+struct Point {
+  T x;
+  T y;
+};
+typedef Point<float> Point2f;
+
+std::vector<std::vector<float>> getRotationMatrix2D(Point2f center, float angle, double scale) {
   float angleRad = angle * M_PI / 180.0;
-  float cosTheta = cos(angleRad);
-  float sinTheta = sin(angleRad);
+  float alpha = cos(angleRad);
+  float beta = sin(angleRad);
 
   std::vector<std::vector<float>> rotationMatrix = {
-      {cosTheta, sinTheta, 0},
-      {-sinTheta, cosTheta, 0}
+      {alpha, beta, (1 - alpha) * center.x - beta * center.y},
+      {-beta, alpha, beta * center.x + (1 - alpha) * center.y}
   };
 
   return rotationMatrix;
@@ -94,16 +101,18 @@ int main(int argc, char* argv[]) {
     int newW = 0;
     int newH = 0;
     rotateNewSize(newW, newH, srcMatHost.cols, srcMatHost.rows, 45);
-    std::vector<std::vector<float>> vec = rotationMatrix(45);
-    I_LOG("calculation destination size={}x{} success", newW, newH);
+    Point2f centor{ srcMatHost.cols / 2, srcMatHost.rows / 2 };
+    std::vector<std::vector<float>> vec = getRotationMatrix2D(centor, 45, 1.0);
+    vec.at(0).at(2) += (float)(newW - srcMatHost.cols) / 2;
+    vec.at(1).at(2) += (float)(newH - srcMatHost.rows) / 2;
 
     //构造结果张量
     size_t dstSize = (size_t)newW * newH;
     void* cpyDstData = malloc(dstSize);
     memset(cpyDstData, 0, dstSize);
     std::vector<uint32_t> dstS{ 1, (uint32_t)newH, (uint32_t)newW, 4 };
-    Tensor dstTenosr(cpyDstData, dstS, TensorDType::UINT8);
-    result = dstTenosr.ToDevice(deviceId);
+    Tensor dstTensor(cpyDstData, dstS, TensorDType::UINT8);
+    result = dstTensor.ToDevice(deviceId);
     if (result != APP_ERR_OK) {
       E_LOG("upload destination tensor to device failed");
       return -1;
@@ -111,7 +120,7 @@ int main(int argc, char* argv[]) {
     I_LOG("build and upload destination tensor success");
 
     //素材张量旋转
-    result = WarpAffineHiper(srcTensor, dstTenosr, vec, PaddingMode::PADDING_CONST, 255, WarpAffineMode::INTER_LINEAR);
+    result = WarpAffineHiper(srcTensor, dstTensor, vec, PaddingMode::PADDING_CONST, 255, WarpAffineMode::INTER_LINEAR);
     if (result != APP_ERR_OK) {
       E_LOG("use WarpAffineHiper failed");
       return -1;
@@ -119,8 +128,13 @@ int main(int argc, char* argv[]) {
 
     I_LOG("warp affine tensor success");
 
+    auto dstShape = dstTensor.GetShape();
+    for (const auto& each : dstShape) {
+      std::cout << each << ", ";
+    }
+
     //下载结果张量至Host侧
-    result = dstTenosr.ToHost();
+    result = dstTensor.ToHost();
     if (result != APP_ERR_OK) {
       E_LOG("download dst tensor to host failed");
       return -1;
@@ -128,9 +142,9 @@ int main(int argc, char* argv[]) {
 
     I_LOG("download dst tensor success");
 
-    cv::Mat dstMat(newH, newW, CV_8UC3);
-    dstMat.data = (uint8_t*)dstTenosr.GetData();
-    cv::cvtColor(dstMat, dstMat, cv::COLOR_RGB2BGR);
+    cv::Mat dstMat(newH, newW, CV_8UC4);
+    dstMat.data = (uint8_t*)dstTensor.GetData();
+    cv::cvtColor(dstMat, dstMat, cv::COLOR_RGBA2BGRA);
     cv::imwrite("dst.png", dstMat);
 
     I_LOG("write dst mat success");
@@ -138,7 +152,7 @@ int main(int argc, char* argv[]) {
     if (cpySrcData) free(cpySrcData);
     if (cpyDstData) free(cpyDstData);
   }
-  MxDeInit();
+  MxBase::MxDeInit();
   I_LOG("warpAffine test finish");
   return 0;
 }
