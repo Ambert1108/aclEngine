@@ -23,7 +23,7 @@
 
 //定义硬件设备初始化等功能
 #include "MxBase/DeviceManager/DeviceManager.h"
-#include "acl/acl.h"
+#include "acle/aclengine.hpp"
 
 #include <iostream>
 #include <vector>
@@ -67,6 +67,7 @@ int main(int argc, char* argv[]) {
   using namespace MxBase;
   MxInit();
   {
+    acle::GpuMat mat;
     APP_ERROR result = APP_ERR_OK;
 
     // MxInit已经包含了设备初始化等工作，无需单独设置
@@ -105,7 +106,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::vector<float>> vec = getRotationMatrix2D(centor, 45, 1.0);
     vec.at(0).at(2) += (float)(newW - srcMatHost.cols) / 2;
     vec.at(1).at(2) += (float)(newH - srcMatHost.rows) / 2;
-
+    
     //构造结果张量
     size_t dstSize = (size_t)newW * newH;
     void* cpyDstData = malloc(dstSize);

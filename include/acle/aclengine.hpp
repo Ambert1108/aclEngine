@@ -5,14 +5,15 @@
 // @revision: [Ambert@2024.7.1]
 
 #pragma once
-#include "core/Types.h"
-#include "core/Utils.hpp"
-#include "core/SafeQueue.hpp"
-#include "core/Error.h"
+#include "core/types.h"
+#include "core/utils.hpp"
+#include "core/safequeue.h"
+#include "core/error.h"
+#include "core/imgproc.h"
+#include "core/frame.h"
+#include "core/aclmat.h"
  
 #include "acl/acl.h"
-//#include "refer/AcleError.h"
-//#include "refer/AclLiteResource.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -423,7 +424,7 @@ namespace acle {
         return ACLE_ERROR_VDEC_INVALID_PARAM;
       }
 
-      ret = acldvppSetStreamDescData(inputStreamDesc_, input->data);
+      ret = acldvppSetStreamDescData(inputStreamDesc_, input->data.get());
       if (ret != ACL_SUCCESS) {
         E_LOG("Set input stream data failed, errorno:{}", ret);
         return ACLE_ERROR_SET_STREAM_DESC_DATA;
@@ -709,10 +710,11 @@ namespace acle {
         uint32_t size = acldvppGetStreamDescSize(output);
         data = copyDataToHost(data, size, ACL_HOST, NORMAL);
         AclPacket pkt;
-        pkt.data = data;
+        pkt.data = SHARED_PTR_NORMAL_BUF(data);
         pkt.size = acldvppGetStreamDescSize(output);
         pkt.pts = acldvppGetStreamDescTimestamp(output);
         pkt.eos = acldvppGetStreamDescEos(output);
+        pkt.memType = NORMAL;
         
         Encoder* own = (Encoder*)user;
         own->pakcetQueue.Push(pkt);
@@ -1036,6 +1038,7 @@ namespace acle {
         avformat_close_input(&fmtCtx);
         fmtCtx = nullptr;
       }
+      I_LOG("[AclEngine::Demuxer] Demuxer is closed");
     }
 
     int demux(std::shared_ptr<AclPacket> packet) {
@@ -1063,20 +1066,12 @@ namespace acle {
       // receive single frame from ffmpeg
       int i = 1;
       while (av_bsf_receive_packet(bsfCtx, &inPacket) == 0) {
-        packet->data = copyDataToDevice(inPacket.data, inPacket.size, runMode, DVPP);
+        void* data = copyDataToDevice(inPacket.data, inPacket.size, runMode, DVPP);
+        packet->data = SHARED_PTR_DVPP_BUF(data);
         packet->size = inPacket.size;
-        if (i > 1) I_LOG("receive {} packet", i);
-        //I_LOG("demux frame:{}", frameIndex);
         packet->pts = frameIndex++;
         i++;
       }
-      //void* buffer = CopyDataToDevice(inPacket.data, inPacket.size,
-      //  runMode, DVPP);
-      //if (buffer == nullptr) {
-      //  E_LOG("Copy packet to device failed");
-      //  av_packet_unref(&inPacket);
-      //  return -1;
-      //}
       
       av_packet_unref(&inPacket);
 
@@ -1087,7 +1082,7 @@ namespace acle {
       return 0;
     }
 
-    int demux(const uint8_t* data, int len, int64_t timestamp, AclPacket& packet) {
+    int demux(const uint8_t* data, int len, int64_t timestamp, std::shared_ptr<AclPacket> packet) {
       if (tmpPkt == nullptr) {
         tmpPkt = av_packet_alloc();
       }
@@ -1113,13 +1108,14 @@ namespace acle {
         tmpPkt->pts = ts;
         if (tmpPkt->size) {
           num++;
-          packet.data = copyDataToDevice(tmpPkt->data, tmpPkt->size, runMode, DVPP);
-          if (!packet.data) {
+          void* data = copyDataToDevice(tmpPkt->data, tmpPkt->size, runMode, DVPP);
+          packet->data = SHARED_PTR_DVPP_BUF(data);
+          if (!packet->data) {
             E_LOG("Copy packet to device failed");
             return -1;
           }
-          packet.size = tmpPkt->size;
-          packet.pts = tmpPkt->pts;
+          packet->size = tmpPkt->size;
+          packet->pts = tmpPkt->pts;
           av_packet_unref(tmpPkt);
         }
       }
@@ -1326,6 +1322,7 @@ namespace acle {
         outNalu.push(d);
         d.clear();
       }
+      data = nullptr;
       int nalu_size = outNalu.size();
       for (int k = 0; k < nalu_size; k++) {
         std::vector<uint8_t> nalu = outNalu.front();
@@ -1484,11 +1481,6 @@ namespace acle {
 
   protected:
     void destoryResource() {
-      //if (inputPicDesc != nullptr) {
-      //  (void)acldvppDestroyPicDesc(inputPicDesc);
-      //  inputPicDesc = nullptr;
-      //}
-
       if (outputPicDesc != nullptr) {
         (void)acldvppDestroyPicDesc(outputPicDesc);
         outputPicDesc = nullptr;
@@ -1679,7 +1671,6 @@ namespace acle {
     bool isClose = false;
     void* outDevBuf; // vpc output buffer
     uint32_t outDevBufSize;  // vpc output size
-    acldvppPicDesc* inputPicDesc; // vpc input desc
     acldvppPicDesc* outputPicDesc; // vpc output desc
     acldvppChannelDesc* channelDesc;
   };
@@ -1784,7 +1775,7 @@ namespace acle {
       return pasteHandle(src1, dest, targetX, targetY);
     }
 
-    AcleError cvtColor(const AclImage& src, AclImage& dest) {
+    AcleError cvtColor(const AclFrame& src, AclFrame& dest) {
       return convertHandle(src, dest);
     }
 
@@ -2279,7 +2270,7 @@ namespace acle {
     }
 
     //格式转换输入图片描述初始化
-    AcleError initConvertpicDesc(const AclImage& inputImage, AclImage& outputImage) {
+    AcleError initConvertpicDesc(const AclFrame& inputImage, AclFrame& outputImage) {
       uint32_t alignWidth = ALIGN_UP16(inputImage.width);
       uint32_t alignHeight = ALIGN_UP2(inputImage.height);
       if (alignWidth == 0 || alignHeight == 0) {
@@ -2325,7 +2316,7 @@ namespace acle {
       I_LOG("convert intput w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, alignWidth, alignHeight, inputImage.format, inputBufferSize);
 
-      acldvppSetPicDescData(inputPicDesc, inputImage.data);
+      acldvppSetPicDescData(inputPicDesc, inputImage.data.get());
       acldvppSetPicDescFormat(inputPicDesc, inputImage.format);
       acldvppSetPicDescWidth(inputPicDesc, inputImage.width);
       acldvppSetPicDescHeight(inputPicDesc, inputImage.height);
@@ -2337,8 +2328,8 @@ namespace acle {
       I_LOG("convert output w:{}/h:{} wstride:{}/hstride:{} format:{}, size:{}",
         inputImage.width, inputImage.height, alignWidth, alignHeight, PIXEL_FORMAT_YUV_SEMIPLANAR_420, outputBufferSize);
 
-
-      aclError aclRet = acldvppMalloc(&outputImage.data, outputBufferSize);
+      void* data = nullptr;
+      aclError aclRet = acldvppMalloc(&data, outputBufferSize);
       if (aclRet != ACL_SUCCESS) {
         E_LOG("Dvpp crop malloc output memory failed, crop "
           "width {}, height {} size {}, error {}",
@@ -2348,8 +2339,8 @@ namespace acle {
       }
       outputImage.width = inputImage.width;
       outputImage.height = inputImage.height;
-      outputImage.widthStride = alignWidth;
-      outputImage.heightStride = alignHeight;
+      outputImage.alignWidth = alignWidth;
+      outputImage.alignHeight = alignHeight;
       outputImage.size = inputBufferSize;
       outputImage.format = PIXEL_FORMAT_YUV_SEMIPLANAR_420;
 
@@ -2358,7 +2349,8 @@ namespace acle {
         E_LOG("Dvpp crop create pic desc failed");
         return ACLE_ERROR;
       }
-      acldvppSetPicDescData(outputPicDesc, outputImage.data);
+      outputImage.data = SHARED_PTR_DVPP_BUF(data);
+      acldvppSetPicDescData(outputPicDesc, outputImage.data.get());
       acldvppSetPicDescFormat(outputPicDesc, PIXEL_FORMAT_YUV_SEMIPLANAR_420);
       acldvppSetPicDescWidth(outputPicDesc, inputImage.width);
       acldvppSetPicDescHeight(outputPicDesc, inputImage.height);
@@ -2368,7 +2360,7 @@ namespace acle {
       return ACLE_OK;
     }
 
-    AcleError convertHandle(const AclImage& src, AclImage& dest) {
+    AcleError convertHandle(const AclFrame& src, AclFrame& dest) {
       if (initConvertpicDesc(src, dest) != ACLE_OK) {
         E_LOG("[ImageHandler::convertHandle] init input and output picdesc failed");
         return ACLE_ERROR;

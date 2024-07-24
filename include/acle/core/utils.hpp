@@ -3,19 +3,14 @@
 // @birth: [Ambert@2024.6.17]
 // @version: V0.0.1
 // @revision: [Ambert@2024.6.17]
-
-#ifndef UTILS_H
-#define UTILS_H
 #pragma once
 
 #include <unistd.h>
 #include <memory>
+#include "types.h"
 
 #include "seeker/logger.h"
 #include "seeker/loggerApi.h"
-#include "acl/acl.h"
-#include "acl/ops/acl_dvpp.h"
-#include "acl/acl_rt.h"
 
 namespace acle{
   enum CopyDirection {
@@ -66,7 +61,7 @@ namespace acle{
       aclRet = acldvppMalloc(&buffer, dataSize);
       break;
     default:
-      E_LOG("Invalid memory type {}", memType);
+      D_LOG("[AclEngine::mallocMemory] invalid memory type");
       aclRet = ACL_ERROR_INVALID_PARAM;
       break;
     }
@@ -94,7 +89,7 @@ namespace acle{
       acldvppFree(mem);
       break;
     default:
-      E_LOG("Invalid memory type %d", memType);
+      D_LOG("[AclEngine::freeMemory] invalid memory type");
       break;
     }
   };
@@ -144,6 +139,5 @@ namespace acle{
     
     return copyData(data, size, policy, memType);
   };
-}
 
-#endif UTILS_H
+}

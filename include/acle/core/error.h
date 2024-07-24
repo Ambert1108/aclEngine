@@ -1,5 +1,3 @@
-#ifndef ERROR_H
-#define ERROR_H
 #pragma once
 #include <unistd.h>
 
@@ -176,5 +174,3 @@ const int ACLE_ERROR_VENC_CREATE_FRAME_CONFIG = 708;
 const int ACLE_ERROR_VENC_SEND_FRAME = 709;
 
 const int ACLE_ERROR_SUBSCRIBE_REPORT = 710;
-
-#endif ERROR_H
