@@ -7,6 +7,7 @@ namespace acle {
 	template<typename _T> inline Size__<_T>::Size__() : width(0), height(0) {};
 	template<typename _T> inline Size__<_T>::Size__(_T _width, _T _height) : width(_width), height(_height) {};
 	template<typename _T> inline Size__<_T>::Size__(const Point__<_T>& pt) : width(pt.x), height(pt.y) {};
+  template<typename _T> inline bool Size__<_T>::empty() const { return width <= 0 || height <= 0; }
 
   GpuMat::GpuMat() : rows(0), cols(0), channels(0), data(nullptr) {};
 
@@ -43,6 +44,7 @@ namespace acle {
       data = malloc(gm.rows * gm.step);
       memcpy(data, gm.data, gm.rows * gm.step);
     }
+    return *this;
   }
 
   bool GpuMat::operator==(const GpuMat& gm) {
@@ -103,6 +105,7 @@ namespace acle {
   void GpuMat::setDevice(int32_t id) { deviceId = id; }
 
   void GpuMat::download(cv::Mat& m) {
+    if (empty()) return;
     GpuMat gm = clone();
     gm.tensor.ToHost();
     int type = 0;
@@ -120,15 +123,16 @@ namespace acle {
       type = ACLE_8UC3;
       break;
     }
-    m.create(rows, cols, type);
     if (!gm.tensor.GetData()) {
       E_LOG("get download data is nullptr");
       return;
     }
+    m.create(rows, cols, type);
     m.data = (uint8_t*)gm.tensor.GetData();
   }
 
   void GpuMat::upload(const cv::Mat& m) {
+    if (m.empty()) return;
     rows = m.rows;
     cols = m.cols;
     switch (m.type()) {
@@ -149,18 +153,22 @@ namespace acle {
     if (data) free(data);
     data = malloc(rows * step);
     memcpy(data, m.data, rows * step);
-    this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, MxBase::TensorDType::UINT8);
-    this->tensor.ToDevice(deviceId);
+    tensor = 
+      MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, MxBase::TensorDType::UINT8);
+    tensor.ToDevice(deviceId);
   }
 
-  GpuMat GpuMat::clone() const {
+  GpuMat GpuMat::clone(MxBase::AscendStream& stream) const {
     GpuMat gm = *this;
-    gm.tensor = this->tensor.Clone();
+    gm.tensor = tensor.Clone(stream);
     return gm;
   }
 
-  void GpuMat::copyTo(GpuMat& gm) {
-    gm = *this;
-    this->tensor.Clone(gm.tensor);
+  void GpuMat::copyTo(GpuMat& gm, MxBase::AscendStream& stream) const {
+    gm = clone(stream);
+  }
+
+  bool GpuMat::empty() const {
+    return tensor.IsEmpty() || !tensor.GetData();
   }
 }

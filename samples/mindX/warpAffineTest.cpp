@@ -83,6 +83,8 @@ int main(int argc, char* argv[]) {
 
     //将素材图片存入Tensor
     std::vector<uint32_t> srcS{ 1, (uint32_t)srcMatHost.rows, (uint32_t)srcMatHost.cols, 4 };
+    int step = (srcMatHost.cols * srcMatHost.channels() * sizeof(CV_8U) + srcMatHost.channels() - 1) & - srcMatHost.channels();
+    I_LOG("calcultion step={}, get step={}", step, srcMatHost.step);
     void* cpySrcData = malloc(srcMatHost.rows * srcMatHost.step);
     memcpy(cpySrcData, srcMatHost.data, srcMatHost.rows * srcMatHost.step);
     Tensor srcTensor(cpySrcData, srcS, TensorDType::UINT8);

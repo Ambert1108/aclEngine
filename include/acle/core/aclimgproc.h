@@ -8,10 +8,10 @@
 #include "MxBase/E2eInfer/TensorOperation/TensorWarping.h"
 #include "MxBase/E2eInfer/TensorOperation/TensorFusion.h"
 
-#include "utils.hpp"
 #include "aclmat.h"
 
 namespace acle {
+	int overlayGpuAlpha(const GpuMat& src1_, const GpuMat& src2_, GpuMat& dst, int x = 0, int y = 0);
 
-
+	int overlayGpuRotate(const GpuMat& srcImg, GpuMat& dstImg, float angle);
 }

@@ -5,7 +5,7 @@
 // @revision: [Ambert@2024.7.24]
 
 #pragma once
-#include "types.h"
+#include "utils.hpp"
 
 #include "MxBase/E2eInfer/Tensor/Tensor.h"
 #include "opencv2/core/mat.hpp"
@@ -87,13 +87,15 @@ namespace acle {
 
     void upload(const cv::Mat& m);
 
-    GpuMat clone() const;
+    GpuMat clone(MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream()) const;
 
-    void copyTo(GpuMat& gm);
+    void copyTo(GpuMat& gm, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream()) const;
+
+    bool empty() const;
 
     int rows, cols, channels;
     size_t step;
-    //std::shared_ptr<MxBase::Tensor> tensor;
+
     MxBase::Tensor tensor;
   private:
     static int32_t deviceId;

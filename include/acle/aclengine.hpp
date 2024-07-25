@@ -9,9 +9,8 @@
 #include "core/utils.hpp"
 #include "core/safequeue.h"
 #include "core/error.h"
-#include "core/imgproc.h"
+#include "core/aclimgproc.h"
 #include "core/frame.h"
-#include "core/aclmat.h"
  
 #include "acl/acl.h"
 #include "MxBase/MxBase.h"

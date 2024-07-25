@@ -131,6 +131,7 @@ namespace acle {
       this->eos = pkt.eos;
       this->memType = pkt.memType;
       this->data = pkt.data;
+      return *this;
     }
   };
 
