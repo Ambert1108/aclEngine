@@ -8,7 +8,7 @@ namespace acle {
 	template<typename _T> inline Size__<_T>::Size__(_T _width, _T _height) : width(_width), height(_height) {};
 	template<typename _T> inline Size__<_T>::Size__(const Point__<_T>& pt) : width(pt.x), height(pt.y) {};
 
-  GpuMat::GpuMat() : rows(0), cols(0), channels(0), tensor(nullptr), data(nullptr) {};
+  GpuMat::GpuMat() : rows(0), cols(0), channels(0), data(nullptr) {};
 
   GpuMat::~GpuMat() {
     if (data) {
@@ -21,14 +21,16 @@ namespace acle {
     this->rows = gm.rows;
     this->cols = gm.cols;
     this->channels = gm.channels;
-    this->tensor = std::make_shared<MxBase::Tensor>(*gm.tensor.get());
+    this->tensor = gm.tensor;
+    data = nullptr;
   }
 
   GpuMat::GpuMat(const GpuMat& gm, const Rect& rect) {
     this->rows = gm.rows;
     this->cols = gm.cols;
     this->channels = gm.channels;
-    this->tensor = std::make_shared<MxBase::Tensor>(*gm.tensor.get(), rect);
+    this->tensor = MxBase::Tensor(gm.tensor, rect);
+    data = nullptr;
   }
 
   GpuMat& GpuMat::operator=(const GpuMat & gm) {
@@ -36,10 +38,15 @@ namespace acle {
     this->cols = gm.cols;
     this->channels = gm.channels;
     this->tensor = gm.tensor;
+    if (gm.data) {
+      if (data) free(data);
+      data = malloc(gm.rows * gm.step);
+      memcpy(data, gm.data, gm.rows * gm.step);
+    }
   }
 
   bool GpuMat::operator==(const GpuMat& gm) {
-    return *this->tensor.get() == *gm.tensor.get();
+    return this->tensor == gm.tensor;
   }
 
   GpuMat::GpuMat(int rows, int cols, int type) {
@@ -59,34 +66,12 @@ namespace acle {
       this->channels = 3;
       break;
     }
-    this->tensor = std::make_shared<MxBase::Tensor>
-      (std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, 
-        MxBase::TensorDType::UINT8);
-    this->tensor->ToDevice(deviceId);
+    this->tensor = MxBase::Tensor(std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels },MxBase::TensorDType::UINT8);
+    this->tensor.ToDevice(deviceId);
+    data = nullptr;
   }
 
-  GpuMat::GpuMat(Size size, int type) {
-    this->rows = size.height;
-    this->cols = size.width;
-    switch (type) {
-    case ACLE_8UC1:
-      this->channels = 1;
-      break;
-    case ACLE_8UC3:
-      this->channels = 3;
-      break;
-    case ACLE_8UC4:
-      this->channels = 4;
-      break;
-    default:
-      this->channels = 3;
-      break;
-    }
-    this->tensor = std::make_shared<MxBase::Tensor>
-      (std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels },
-        MxBase::TensorDType::UINT8);
-    this->tensor->ToDevice(deviceId);
-  }
+  GpuMat::GpuMat(Size size, int type) : GpuMat(size.height, size.width, type) {}
 
   GpuMat::GpuMat(const cv::Mat& m) {
     this->rows = m.rows;
@@ -105,37 +90,77 @@ namespace acle {
       this->channels = 3;
       break;
     }
-    if (data) free(data);
+    this->step = m.step;
+    data = nullptr;
     data = malloc(m.rows * m.step);
     memcpy(data, m.data, m.rows * m.step);
-    this->tensor = std::make_shared<MxBase::Tensor>
-      (data,
-       std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels },
-       MxBase::TensorDType::UINT8);
-    this->tensor->ToDevice(deviceId);
+    this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, MxBase::TensorDType::UINT8);
+    this->tensor.ToDevice(deviceId);
   }
 
   int32_t GpuMat::deviceId = -1;
 
   void GpuMat::setDevice(int32_t id) { deviceId = id; }
 
-  void GpuMat::download(GpuMat& gm) {
-    gm = this->clone();
-    gm.tensor->ToHost();
+  void GpuMat::download(cv::Mat& m) {
+    GpuMat gm = clone();
+    gm.tensor.ToHost();
+    int type = 0;
+    switch (channels) {
+    case 1:
+      type = ACLE_8UC1;
+      break;
+    case 3:
+      type = ACLE_8UC3;
+      break;
+    case 4:
+      type = ACLE_8UC4;
+      break;
+    default:
+      type = ACLE_8UC3;
+      break;
+    }
+    m.create(rows, cols, type);
+    if (!gm.tensor.GetData()) {
+      E_LOG("get download data is nullptr");
+      return;
+    }
+    m.data = (uint8_t*)gm.tensor.GetData();
   }
 
-  void GpuMat::upload(GpuMat& gm) {
-    gm = this->clone();
-    gm.tensor->ToDevice(deviceId);
+  void GpuMat::upload(const cv::Mat& m) {
+    rows = m.rows;
+    cols = m.cols;
+    switch (m.type()) {
+    case ACLE_8UC1:
+      channels = 1;
+      break;
+    case ACLE_8UC3:
+      channels = 3;
+      break;
+    case ACLE_8UC4:
+      channels = 4;
+      break;
+    default:
+      channels = 3;
+      break;
+    }
+    step = m.step;
+    if (data) free(data);
+    data = malloc(rows * step);
+    memcpy(data, m.data, rows * step);
+    this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, MxBase::TensorDType::UINT8);
+    this->tensor.ToDevice(deviceId);
   }
 
   GpuMat GpuMat::clone() const {
-    GpuMat gm;
-    *gm.tensor.get() = this->tensor->Clone();
+    GpuMat gm = *this;
+    gm.tensor = this->tensor.Clone();
     return gm;
   }
 
-  void GpuMat::copyTo(const GpuMat& gm) {
-    this->tensor->Clone(*gm.tensor.get());
+  void GpuMat::copyTo(GpuMat& gm) {
+    gm = *this;
+    this->tensor.Clone(gm.tensor);
   }
 }

@@ -19,6 +19,8 @@
 #include "acl/ops/acl_dvpp.h"
 #include "acl/acl_rt.h"
 
+#include "opencv2/core/hal/interface.h"
+
 namespace acle {
   // regex for verify video file name
   const std::string RegexVideoFile = "^.+\\.(mp4|h264|h265)$";
@@ -126,7 +128,7 @@ namespace acle {
      */
 #define SIZEOF_ARRAY(array)  (sizeof(array)/sizeof(array[0]))
 
-#define ACLE_8UC1 1
-#define ACLE_8UC3 2
-#define ACLE_8UC4 3
+#define ACLE_8UC1 CV_8UC1
+#define ACLE_8UC3 CV_8UC3
+#define ACLE_8UC4 CV_8UC4
 }

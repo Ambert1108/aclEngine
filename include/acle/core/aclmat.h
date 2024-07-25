@@ -5,10 +5,10 @@
 // @revision: [Ambert@2024.7.24]
 
 #pragma once
+#include "types.h"
+
 #include "MxBase/E2eInfer/Tensor/Tensor.h"
 #include "opencv2/core/mat.hpp"
-
-#include "types.h"
 
 #include <iostream>
 #include <vector>
@@ -81,18 +81,20 @@ namespace acle {
 
     GpuMat(const cv::Mat& m);
 
-    static inline void setDevice(int32_t id);
+    static void setDevice(int32_t id);
 
-    void download(GpuMat& gm);
+    void download(cv::Mat& m);
 
-    void upload(GpuMat& gm);
+    void upload(const cv::Mat& m);
 
     GpuMat clone() const;
 
-    void copyTo(const GpuMat& gm);
+    void copyTo(GpuMat& gm);
 
     int rows, cols, channels;
-    std::shared_ptr<MxBase::Tensor> tensor;
+    size_t step;
+    //std::shared_ptr<MxBase::Tensor> tensor;
+    MxBase::Tensor tensor;
   private:
     static int32_t deviceId;
     void* data;

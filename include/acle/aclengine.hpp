@@ -14,6 +14,7 @@
 #include "core/aclmat.h"
  
 #include "acl/acl.h"
+#include "MxBase/MxBase.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
