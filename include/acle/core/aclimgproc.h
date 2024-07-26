@@ -11,7 +11,7 @@
 #include "aclmat.h"
 
 namespace acle {
-	int overlayGpuAlpha(const GpuMat& src1_, const GpuMat& src2_, GpuMat& dst, int x = 0, int y = 0);
+	int overlayGpuAlpha(const GpuMat& src1_, const GpuMat& src2_, GpuMat& dst, int x = 0, int y = 0, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
 	int overlayGpuRotate(const GpuMat& srcImg, GpuMat& dstImg, float angle);
 }

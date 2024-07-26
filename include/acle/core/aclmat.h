@@ -83,7 +83,7 @@ namespace acle {
 
     static void setDevice(int32_t id);
 
-    void download(cv::Mat& m);
+    void download(cv::Mat& m, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
     void upload(const cv::Mat& m);
 

@@ -1,7 +1,7 @@
 #include "aclimgproc.h"
 
 namespace acle {
-	int overlayGpuAlpha(const GpuMat& src1, const GpuMat& src2, GpuMat& dst, int x, int y) {
+	int overlayGpuAlpha(const GpuMat& src1, const GpuMat& src2, GpuMat& dst, int x, int y, MxBase::AscendStream& stream) {
 		if (src1.empty() || src2.empty()) {
 			E_LOG("[aclimgproc::overlayGpuAlpha] input is empty");
 			return -1;
@@ -24,13 +24,13 @@ namespace acle {
 			return -1;
 		}
 
-		src2.copyTo(dst);
+		src2.copyTo(dst, stream);
 
 		acle::Rect roi(x, y, x + w, y + h);
 		acle::GpuMat roiMat = acle::GpuMat(dst, roi);
 
 		if (src1.channels == 4 && dst.channels == 3) {
-			APP_ERROR result = MxBase::BlendImages(src1.tensor, roiMat.tensor);
+			APP_ERROR result = MxBase::BlendImages(src1.tensor, roiMat.tensor, stream);
 			if (result != APP_ERR_OK) {
 				E_LOG("[aclimgproc::overlayGpuAlpha] use BlendImages failed");
 				return -1;

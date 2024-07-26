@@ -25,9 +25,126 @@
 #include "MxBase/DeviceManager/DeviceManager.h"
 #include "acl/acl.h"
 
+#include "seeker/common.h"
 #include <iostream>
 
 #define ALIGN_UP(num, align) (((num) + (align) - 1) & ~((align) - 1))
+
+int deviceId;
+
+
+using namespace MxBase;
+
+void test() {
+  auto st = seeker::time::currentTime();
+  APP_ERROR result = APP_ERR_OK;
+
+  // MxInit已经包含了设备初始化等工作，无需单独设置
+  // MxInit的作用域需要大于图像处理操作
+  // 使用Tensor的ToDevice函数上传到设备上时，确认使用哪张卡
+
+  //DeviceContext deviceContext_ = {};
+  //result = DeviceManager::GetInstance()->InitDevices();
+  //if (result != APP_ERR_OK) {
+  //  E_LOG("Init device {} failed", deviceId);
+  //  return -1;
+  //}
+  //deviceContext_.devId = deviceId;
+  //result = DeviceManager::GetInstance()->SetDevice(deviceContext_);
+  //if (result != APP_ERR_OK) {
+  //  E_LOG("Set device {} failed", deviceId);
+  //  return -1;
+  //}
+  //I_LOG("init device {} success", deviceId);
+
+  //加载素材图片
+  //cv::Mat srcMatHost = cv::imread("top.png", cv::IMREAD_UNCHANGED);
+  cv::Mat srcMatHost = cv::imread("21.png", cv::IMREAD_UNCHANGED);
+  cv::cvtColor(srcMatHost, srcMatHost, cv::COLOR_BGRA2RGBA);
+  cv::resize(srcMatHost, srcMatHost, cv::Size(300, 300));
+
+  I_LOG("load source picture success");
+
+  //加载背景图片
+  cv::Mat bottomMatHost = cv::imread("bottom.png", cv::IMREAD_COLOR);
+  cv::cvtColor(bottomMatHost, bottomMatHost, cv::COLOR_BGR2RGB);
+
+  I_LOG("load background picture success");
+
+  //将素材图片存入Tensor
+  std::vector<uint32_t> srcS{ (uint32_t)srcMatHost.rows, (uint32_t)srcMatHost.cols, 4 };
+  void* cpySrcData = malloc(srcMatHost.rows * srcMatHost.step);
+  memcpy(cpySrcData, srcMatHost.data, srcMatHost.rows * srcMatHost.step);
+  Tensor srcTensor(cpySrcData, srcS, TensorDType::UINT8);
+
+  I_LOG("fill source picture in Tensor success");
+
+  //上传素材向量至Device侧
+  result = srcTensor.ToDevice(deviceId);
+  if (result != APP_ERR_OK) {
+    E_LOG("upload source tensor to device failed");
+    return;
+  }
+
+  I_LOG("upload source tensor success");
+
+  //将背景图片存入Tensor
+  std::vector<uint32_t> bottomS{ (uint32_t)bottomMatHost.rows, (uint32_t)bottomMatHost.cols, 3 };
+  void* cpyBottomData = malloc(bottomMatHost.rows * bottomMatHost.step);
+  memcpy(cpyBottomData, bottomMatHost.data, bottomMatHost.rows * bottomMatHost.step);
+  Tensor imageTensor(cpyBottomData, bottomS, TensorDType::UINT8);
+
+  I_LOG("fill background picture in Tensor success");
+
+  //上传背景向量至Device侧
+  result = imageTensor.ToDevice(deviceId);
+  if (result != APP_ERR_OK) {
+    E_LOG("upload bottom tensor to device failed");
+    return;
+  }
+
+  //在背景向量上选取roi区域作为叠加区域
+  Rect roi(100, 100, 100 + srcMatHost.cols, 100 + srcMatHost.rows);
+  imageTensor = Tensor(imageTensor, roi);
+
+  I_LOG("upload background tensor success");
+
+  //素材张量叠加到背景张量
+  result = BlendImages(srcTensor, imageTensor);
+  if (result != APP_ERR_OK) {
+    E_LOG("use BlendImages failed");
+    return;
+  }
+
+  I_LOG("blend tensor success");
+
+  //下载结果张量至Host侧
+  result = imageTensor.ToHost();
+  if (result != APP_ERR_OK) {
+    E_LOG("download dst tensor to host failed");
+    return;
+  }
+
+  I_LOG("download dst tensor success");
+
+  cv::Mat dstMat(bottomMatHost.rows, bottomMatHost.cols, CV_8UC3);
+  dstMat.data = (uint8_t*)imageTensor.GetData();
+  cv::cvtColor(dstMat, dstMat, cv::COLOR_RGB2BGR);
+  cv::imwrite("dst.png", dstMat);
+
+  I_LOG("write dst mat success");
+
+
+  //result = DeviceManager::GetInstance()->DestroyDevices();
+  //if (result != APP_ERR_OK) {
+  //  E_LOG("destroy device {} failed", deviceId);
+  //  return -1;
+  //}
+
+  if (cpySrcData) free(cpySrcData);
+  if (cpyBottomData) free(cpyBottomData);
+  I_LOG("run time {} ms", seeker::time::currentTime() - st);
+}
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
@@ -35,7 +152,7 @@ int main(int argc, char* argv[]) {
     return 0;
   }
   I_LOG("start test2");
-  int deviceId = std::atoi(argv[1]);
+  deviceId = std::atoi(argv[1]);
 
   //aclError ret = aclrtSetDevice(deviceId);
   //if (ret != ACL_SUCCESS) {
@@ -43,117 +160,14 @@ int main(int argc, char* argv[]) {
   //  return ACL_ERROR_NONE;
   //}
   //I_LOG("Open device {} ok", deviceId);
+  
 
-  using namespace MxBase;
   //MxInitFromConfig("config.json");
   MxInit();
   {
-    APP_ERROR result = APP_ERR_OK;
-
-    // MxInit已经包含了设备初始化等工作，无需单独设置
-    // MxInit的作用域需要大于图像处理操作
-    // 使用Tensor的ToDevice函数上传到设备上时，确认使用哪张卡
-
-    //DeviceContext deviceContext_ = {};
-    //result = DeviceManager::GetInstance()->InitDevices();
-    //if (result != APP_ERR_OK) {
-    //  E_LOG("Init device {} failed", deviceId);
-    //  return -1;
-    //}
-    //deviceContext_.devId = deviceId;
-    //result = DeviceManager::GetInstance()->SetDevice(deviceContext_);
-    //if (result != APP_ERR_OK) {
-    //  E_LOG("Set device {} failed", deviceId);
-    //  return -1;
-    //}
-    //I_LOG("init device {} success", deviceId);
-
-    //加载素材图片
-    //cv::Mat srcMatHost = cv::imread("top.png", cv::IMREAD_UNCHANGED);
-    cv::Mat srcMatHost = cv::imread("21.png", cv::IMREAD_UNCHANGED);
-    cv::cvtColor(srcMatHost, srcMatHost, cv::COLOR_BGRA2RGBA);
-    cv::resize(srcMatHost, srcMatHost, cv::Size(300, 300));
-
-    I_LOG("load source picture success");
-
-    //加载背景图片
-    cv::Mat bottomMatHost = cv::imread("bottom.png", cv::IMREAD_COLOR);
-    cv::cvtColor(bottomMatHost, bottomMatHost, cv::COLOR_BGR2RGB);
-
-    I_LOG("load background picture success");
-
-    //将素材图片存入Tensor
-    std::vector<uint32_t> srcS{ (uint32_t)srcMatHost.rows, (uint32_t)srcMatHost.cols, 4 };
-    void* cpySrcData = malloc(srcMatHost.rows * srcMatHost.step);
-    memcpy(cpySrcData, srcMatHost.data, srcMatHost.rows * srcMatHost.step);
-    Tensor srcTensor(cpySrcData, srcS, TensorDType::UINT8);
-
-    I_LOG("fill source picture in Tensor success");
-
-    //上传素材向量至Device侧
-    result = srcTensor.ToDevice(deviceId);
-    if (result != APP_ERR_OK) {
-      E_LOG("upload source tensor to device failed");
-      return -1;
-    }
-
-    I_LOG("upload source tensor success");
-
-    //将背景图片存入Tensor
-    std::vector<uint32_t> bottomS{ (uint32_t)bottomMatHost.rows, (uint32_t)bottomMatHost.cols, 3 };
-    void* cpyBottomData = malloc(bottomMatHost.rows * bottomMatHost.step);
-    memcpy(cpyBottomData, bottomMatHost.data, bottomMatHost.rows * bottomMatHost.step);
-    Tensor imageTensor(cpyBottomData, bottomS, TensorDType::UINT8);
-
-    I_LOG("fill background picture in Tensor success");
-
-    //上传背景向量至Device侧
-    result = imageTensor.ToDevice(deviceId);
-    if (result != APP_ERR_OK) {
-      E_LOG("upload bottom tensor to device failed");
-      return -1;
-    }
-
-    //在背景向量上选取roi区域作为叠加区域
-    Rect roi(100, 100, 100 + srcMatHost.cols, 100 + srcMatHost.rows);
-    imageTensor = Tensor(imageTensor, roi);
-
-    I_LOG("upload background tensor success");
-
-    //素材张量叠加到背景张量
-    result = BlendImages(srcTensor, imageTensor);
-    if (result != APP_ERR_OK) {
-      E_LOG("use BlendImages failed");
-      return -1;
-    }
-
-    I_LOG("blend tensor success");
-
-    //下载结果张量至Host侧
-    result = imageTensor.ToHost();
-    if (result != APP_ERR_OK) {
-      E_LOG("download dst tensor to host failed");
-      return -1;
-    }
-
-    I_LOG("download dst tensor success");
-
-    cv::Mat dstMat(bottomMatHost.rows, bottomMatHost.cols, CV_8UC3);
-    dstMat.data = (uint8_t*)imageTensor.GetData();
-    cv::cvtColor(dstMat, dstMat, cv::COLOR_RGB2BGR);
-    cv::imwrite("dst.png", dstMat);
-
-    I_LOG("write dst mat success");
-
-
-    //result = DeviceManager::GetInstance()->DestroyDevices();
-    //if (result != APP_ERR_OK) {
-    //  E_LOG("destroy device {} failed", deviceId);
-    //  return -1;
-    //}
-
-    if(cpySrcData) free(cpySrcData);
-    if(cpyBottomData) free(cpyBottomData);
+    test();
+    test();
+    test();
   }
   MxDeInit();
   I_LOG("test2 finish");

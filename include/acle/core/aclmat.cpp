@@ -104,9 +104,9 @@ namespace acle {
 
   void GpuMat::setDevice(int32_t id) { deviceId = id; }
 
-  void GpuMat::download(cv::Mat& m) {
+  void GpuMat::download(cv::Mat& m, MxBase::AscendStream& stream) {
     if (empty()) return;
-    GpuMat gm = clone();
+    GpuMat gm = clone(stream);
     gm.tensor.ToHost();
     int type = 0;
     switch (channels) {
