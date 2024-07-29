@@ -4,9 +4,9 @@
 #include "seeker/common.h"
 #include <iostream>
 
-int deviceId, x, y;
+int deviceId, x, y, angle;
 
-void blendImageTest(MxBase::AscendStream& stream) {
+void overlayImageTest(MxBase::AscendStream& stream) {
   auto st = seeker::time::currentTime();
   auto t = seeker::time::currentTime();
   //加载素材图片
@@ -44,37 +44,71 @@ void blendImageTest(MxBase::AscendStream& stream) {
   //下载结果张量至Host侧
   cv::Mat dstMat;
   dstMatGpu.download(dstMat, stream);
-  stream.Synchronize();
   I_LOG("download dst picture success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();
 
   cv::Mat cvtMat;
   cv::cvtColor(dstMat, cvtMat, cv::COLOR_RGB2BGR);
-  cv::imwrite("dst.png", cvtMat);
+  cv::imwrite("overlay_dst.png", cvtMat);
+
+  I_LOG("write dst mat success, use {}ms", seeker::time::currentTime() - t);
+  I_LOG("run time use {} ms", seeker::time::currentTime() - st);
+}
+
+void rotateImageTest(MxBase::AscendStream& stream) {
+  auto st = seeker::time::currentTime();
+  auto t = seeker::time::currentTime();
+  //加载素材图片
+  cv::Mat srcMatHost = cv::imread("21.png", cv::IMREAD_UNCHANGED);
+  cv::cvtColor(srcMatHost, srcMatHost, cv::COLOR_BGRA2RGBA);
+  cv::resize(srcMatHost, srcMatHost, cv::Size(300, 300));
+
+  I_LOG("load source picture success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //上传素材图片
+  acle::GpuMat srcMatGpu(srcMatHost, 1);
+  I_LOG("upload source picture success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //素材图片旋转
+  acle::GpuMat dstMatGpu;
+  if (acle::overlayGpuRotate(srcMatGpu, dstMatGpu, angle, stream) != 0) return;
+
+  I_LOG("rotate tensor success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //下载结果张量至Host侧
+  cv::Mat dstMat;
+  dstMatGpu.download(dstMat, stream);
+  I_LOG("download dst picture success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+  cv::Mat cvtMat;
+  cv::cvtColor(dstMat, cvtMat, cv::COLOR_RGBA2BGRA);
+  cv::imwrite("rotate_dst.png", cvtMat);
 
   I_LOG("write dst mat success, use {}ms", seeker::time::currentTime() - t);
   I_LOG("run time use {} ms", seeker::time::currentTime() - st);
 }
 
 int main(int argc, char* argv[]) {
-  if (argc < 4) {
-    E_LOG("Please use {./xxx $deviceId $x $y} and try again");
+  if (argc < 3) {
+    E_LOG("Please use {./xxx $deviceId $(x or angle) $y(0)} and try again");
     return 0;
   }
   I_LOG("start acle test");
   deviceId = std::atoi(argv[1]);
-  x = std::atoi(argv[2]);
-  y = std::atoi(argv[3]);
+  angle = x = std::atoi(argv[2]);
+  if (argv[3]) y = std::atoi(argv[3]);
+  else y = 0;
 
   MxBase::MxInit();
   {
     acle::GpuMat::setDevice(deviceId);
     MxBase::AscendStream stream(deviceId);
     stream.CreateAscendStream();
-    blendImageTest(stream);
-    blendImageTest(stream);
-    blendImageTest(stream);
-
+    rotateImageTest(stream);
+    //overlayImageTest(stream);
   }
   MxBase::MxDeInit();
   I_LOG("acle test success");

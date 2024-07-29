@@ -110,7 +110,10 @@ int main(int argc, char* argv[]) {
     vec.at(1).at(2) += (float)(newH - srcMatHost.rows) / 2;
     
     //构造结果张量
-    size_t dstSize = (size_t)newW * newH;
+    size_t dstStep = (size_t)newW * 4;
+    size_t dstSize = (size_t)newH * dstStep;
+    //size_t dstSize = (size_t)newW * newH;
+    I_LOG("size={}", dstSize);
     void* cpyDstData = malloc(dstSize);
     memset(cpyDstData, 0, dstSize);
     std::vector<uint32_t> dstS{ 1, (uint32_t)newH, (uint32_t)newW, 4 };
@@ -147,6 +150,7 @@ int main(int argc, char* argv[]) {
 
     cv::Mat dstMat(newH, newW, CV_8UC4);
     dstMat.data = (uint8_t*)dstTensor.GetData();
+    I_LOG("step={}", dstMat.step);
     cv::cvtColor(dstMat, dstMat, cv::COLOR_RGBA2BGRA);
     cv::imwrite("dst.png", dstMat);
 

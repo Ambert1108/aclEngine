@@ -75,17 +75,17 @@ namespace acle {
 
     bool operator==(const GpuMat& gm);
 
-    GpuMat(int rows, int cols, int type);
+    GpuMat(int rows, int cols, int type, bool flag = false);
 
-    GpuMat(Size size, int type);
+    GpuMat(Size size, int type, bool flag = false);
 
-    GpuMat(const cv::Mat& m);
+    GpuMat(const cv::Mat& m, bool flag = false);
 
     static void setDevice(int32_t id);
 
     void download(cv::Mat& m, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
-    void upload(const cv::Mat& m);
+    void upload(const cv::Mat& m, bool flag = false);
 
     GpuMat clone(MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream()) const;
 

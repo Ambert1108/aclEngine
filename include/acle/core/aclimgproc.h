@@ -13,5 +13,11 @@
 namespace acle {
 	int overlayGpuAlpha(const GpuMat& src1_, const GpuMat& src2_, GpuMat& dst, int x = 0, int y = 0, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
-	int overlayGpuRotate(const GpuMat& srcImg, GpuMat& dstImg, float angle);
+	int overlayGpuRotate(const GpuMat& srcImg, GpuMat& dstImg, float angle, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
+
+	namespace own {
+		std::vector<std::vector<float>> getRotationMatrix2D(Point2f center, float angle, double scale);
+		
+    void rotateNewSize(int& new_w, int& new_h, int old_w, int old_h, int angle);
+	}
 }

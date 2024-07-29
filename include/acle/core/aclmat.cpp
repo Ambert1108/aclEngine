@@ -3,13 +3,21 @@
 namespace acle {
 	template<typename _T> inline Point__<_T>::Point__() : x(0), y(0) {};
 	template<typename _T> inline Point__<_T>::Point__(_T _x, _T _y) : x(_x), y(_y) {};
+  template class Point__<int>;
+  template class Point__<int64_t>;
+  template class Point__<float>;
+  template class Point__<double>;
 
 	template<typename _T> inline Size__<_T>::Size__() : width(0), height(0) {};
 	template<typename _T> inline Size__<_T>::Size__(_T _width, _T _height) : width(_width), height(_height) {};
 	template<typename _T> inline Size__<_T>::Size__(const Point__<_T>& pt) : width(pt.x), height(pt.y) {};
   template<typename _T> inline bool Size__<_T>::empty() const { return width <= 0 || height <= 0; }
+  template class Size__<int>;
+  template class Size__<int64_t>;
+  template class Size__<float>;
+  template class Size__<double>;
 
-  GpuMat::GpuMat() : rows(0), cols(0), channels(0), data(nullptr) {};
+  GpuMat::GpuMat() : rows(0), cols(0), channels(0), step(0), data(nullptr) {};
 
   GpuMat::~GpuMat() {
     if (data) {
@@ -22,14 +30,16 @@ namespace acle {
     this->rows = gm.rows;
     this->cols = gm.cols;
     this->channels = gm.channels;
+    this->step = gm.step;
     this->tensor = gm.tensor;
     data = nullptr;
   }
 
   GpuMat::GpuMat(const GpuMat& gm, const Rect& rect) {
-    this->rows = gm.rows;
-    this->cols = gm.cols;
+    this->rows = rect.y1 - rect.y0;
+    this->cols = rect.x1 - rect.x0;
     this->channels = gm.channels;
+    this->step = (size_t)this->cols * this->channels;
     this->tensor = MxBase::Tensor(gm.tensor, rect);
     data = nullptr;
   }
@@ -38,12 +48,8 @@ namespace acle {
     this->rows = gm.rows;
     this->cols = gm.cols;
     this->channels = gm.channels;
+    this->step = gm.step;
     this->tensor = gm.tensor;
-    if (gm.data) {
-      if (data) free(data);
-      data = malloc(gm.rows * gm.step);
-      memcpy(data, gm.data, gm.rows * gm.step);
-    }
     return *this;
   }
 
@@ -51,7 +57,7 @@ namespace acle {
     return this->tensor == gm.tensor;
   }
 
-  GpuMat::GpuMat(int rows, int cols, int type) {
+  GpuMat::GpuMat(int rows, int cols, int type, bool flag) {
     this->rows = rows;
     this->cols = cols;
     switch (type) {
@@ -68,36 +74,26 @@ namespace acle {
       this->channels = 3;
       break;
     }
-    this->tensor = MxBase::Tensor(std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels },MxBase::TensorDType::UINT8);
-    this->tensor.ToDevice(deviceId);
+    this->step = (size_t)this->cols * this->channels;
+    size_t size = (size_t)this->rows * this->step;
     data = nullptr;
+    data = malloc(size);
+    memset(data, 0, size);
+    if (flag) {
+      // use NHWC
+      this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ 1, (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, MxBase::TensorDType::UINT8);
+    }
+    else {
+      // use HWC
+      this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels },MxBase::TensorDType::UINT8);
+    }
+    this->tensor.ToDevice(deviceId);
   }
 
-  GpuMat::GpuMat(Size size, int type) : GpuMat(size.height, size.width, type) {}
+  GpuMat::GpuMat(Size size, int type, bool flag) : GpuMat(size.height, size.width, type, flag) {}
 
-  GpuMat::GpuMat(const cv::Mat& m) {
-    this->rows = m.rows;
-    this->cols = m.cols;
-    switch (m.type()) {
-    case ACLE_8UC1:
-      this->channels = 1;
-      break;
-    case ACLE_8UC3:
-      this->channels = 3;
-      break;
-    case ACLE_8UC4:
-      this->channels = 4;
-      break;
-    default:
-      this->channels = 3;
-      break;
-    }
-    this->step = m.step;
-    data = nullptr;
-    data = malloc(m.rows * m.step);
-    memcpy(data, m.data, m.rows * m.step);
-    this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, MxBase::TensorDType::UINT8);
-    this->tensor.ToDevice(deviceId);
+  GpuMat::GpuMat(const cv::Mat& m, bool flag) : GpuMat() {
+    upload(m, flag);
   }
 
   int32_t GpuMat::deviceId = -1;
@@ -107,7 +103,6 @@ namespace acle {
   void GpuMat::download(cv::Mat& m, MxBase::AscendStream& stream) {
     if (empty()) return;
     GpuMat gm = clone(stream);
-    gm.tensor.ToHost();
     int type = 0;
     switch (channels) {
     case 1:
@@ -123,15 +118,21 @@ namespace acle {
       type = ACLE_8UC3;
       break;
     }
+    stream.Synchronize();
+    gm.tensor.ToHost();
     if (!gm.tensor.GetData()) {
       E_LOG("get download data is nullptr");
       return;
     }
     m.create(rows, cols, type);
     m.data = (uint8_t*)gm.tensor.GetData();
+    if (m.empty()) {
+      E_LOG("download data failed, mat is empty");
+      return;
+    }
   }
 
-  void GpuMat::upload(const cv::Mat& m) {
+  void GpuMat::upload(const cv::Mat& m, bool flag) {
     if (m.empty()) return;
     rows = m.rows;
     cols = m.cols;
@@ -153,8 +154,14 @@ namespace acle {
     if (data) free(data);
     data = malloc(rows * step);
     memcpy(data, m.data, rows * step);
-    tensor = 
-      MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, MxBase::TensorDType::UINT8);
+    if (flag) {
+      // use NHWC
+      tensor = MxBase::Tensor(data, std::vector<uint32_t>{ 1, (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, MxBase::TensorDType::UINT8);
+    }
+    else {
+      // use HWC
+      tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, MxBase::TensorDType::UINT8);
+    }
     tensor.ToDevice(deviceId);
   }
 
