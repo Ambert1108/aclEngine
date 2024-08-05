@@ -91,6 +91,32 @@ void rotateImageTest(MxBase::AscendStream& stream) {
   I_LOG("run time use {} ms", seeker::time::currentTime() - st);
 }
 
+void maskBlendTest() {
+  auto st = seeker::time::currentTime();
+  auto t = seeker::time::currentTime();
+  //加载蒙版图片
+  cv::Mat maskMatHost = cv::imread("mask.png", cv::IMREAD_UNCHANGED);
+  //cv::cvtColor(srcMatHost, srcMatHost, cv::COLOR_BGRA2RGBA);
+  cv::resize(maskMatHost, maskMatHost, cv::Size(720, 1280));
+
+  I_LOG("load mask picture success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //加载视频图片
+  cv::Mat videoMatHost = cv::imread("bottom.png", cv::IMREAD_UNCHANGED);
+  cv::cvtColor(videoMatHost, videoMatHost, cv::COLOR_BGRA2RGBA);
+
+  I_LOG("load video picture success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //加载背景图片
+  cv::Mat backgroundMatHost = cv::imread("background.png", cv::IMREAD_COLOR);
+  cv::cvtColor(backgroundMatHost, backgroundMatHost, cv::COLOR_BGR2RGB);
+
+  I_LOG("load background picture success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+}
+
 int main(int argc, char* argv[]) {
   if (argc < 3) {
     E_LOG("Please use {./xxx $deviceId $(x or angle) $y(0)} and try again");
