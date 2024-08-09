@@ -42,10 +42,17 @@ namespace acle {
   public:
     Size__();
     Size__(_T _width, _T _height);
+    Size__(const Size__<_T>& size);
     Size__(const Point__<_T>& pt);
 
     Size__& operator = (const Size__& sz) = default;
     Size__& operator = (Size__&& sz) noexcept = default;
+    friend bool operator == (const Size__<_T>& a, const Size__<_T>& b) {
+      return a.width == b.width && a.height == b.height;
+    }
+    friend bool operator != (const Size__<_T>& a, const Size__<_T>& b) {
+      return !(a == b);
+    }
     bool empty() const;
 
 
@@ -75,23 +82,25 @@ namespace acle {
 
     bool operator==(const GpuMat& gm);
 
-    GpuMat(int rows, int cols, int type, bool flag = false);
+    GpuMat(int rows, int cols, int type, bool flag = false, MxBase::TensorDType dataType = MxBase::TensorDType::UINT8);
 
-    GpuMat(Size size, int type, bool flag = false);
+    GpuMat(Size size, int type, bool flag = false, MxBase::TensorDType dataType = MxBase::TensorDType::UINT8);
 
-    GpuMat(const cv::Mat& m, bool flag = false);
+    GpuMat(const cv::Mat& m, bool flag = false, MxBase::TensorDType dataType = MxBase::TensorDType::UINT8);
 
     static void setDevice(int32_t id);
 
     void download(cv::Mat& m, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
-    void upload(const cv::Mat& m, bool flag = false);
+    void upload(const cv::Mat& m, bool flag = false, MxBase::TensorDType dataType = MxBase::TensorDType::UINT8);
 
     GpuMat clone(MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream()) const;
 
     void copyTo(GpuMat& gm, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream()) const;
 
     bool empty() const;
+
+    Size size() const;
 
     int rows, cols, channels;
     size_t step;
@@ -100,6 +109,9 @@ namespace acle {
   private:
     static int32_t deviceId;
     void* data;
+    Size matSize;
+
+    friend class Overlay;
   };
 
   //namespace cuda { 

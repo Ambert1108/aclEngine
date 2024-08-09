@@ -38,7 +38,7 @@ void test() {
   auto t = seeker::time::currentTime();
   APP_ERROR result = APP_ERR_OK;
   //加载蒙版图片
-  cv::Mat maskMatHost = cv::imread("mask.png", cv::IMREAD_GRAYSCALE);
+  cv::Mat maskMatHost = cv::imread("mask.png", cv::IMREAD_ANYCOLOR);
   I_LOG("mask channel:{}, type={}(reference values CV_8UC1:{}, CV_16FC1:{})", 
     maskMatHost.channels(), maskMatHost.type(), CV_8UC1, CV_16FC1);
   cv::resize(maskMatHost, maskMatHost, cv::Size(720, 1280));
@@ -78,8 +78,52 @@ void test() {
     return;
   }
   I_LOG("upload mask tensor success, use {}ms", seeker::time::currentTime() - t);
-  t = seeker::time::currentTime(); 
+  t = seeker::time::currentTime();
 
+  //将视频图片存入Tensor
+  //支持float16、uint8类型，维度支持HW（二维）、HWC（三维）、其中“C”（通道数）为“1”或“3”
+  I_LOG("video size is w:{} h:{}", videoMatHost.cols, videoMatHost.rows);
+  std::vector<uint32_t> videoS{ (uint32_t)videoMatHost.rows, (uint32_t)videoMatHost.cols, 3 };
+  void* cpyVideoData = malloc(videoMatHost.rows * videoMatHost.step);
+  memcpy(cpyVideoData, videoMatHost.data, videoMatHost.rows * videoMatHost.step);
+  Tensor videoTmpTensor(cpyVideoData, videoS, TensorDType::UINT8);
+
+  I_LOG("fill video picture in Tensor success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //上传视频向量至Device侧
+  result = videoTmpTensor.ToDevice(deviceId);
+  if (result != APP_ERR_OK) {
+    E_LOG("upload video tensor to device failed");
+    return;
+  }
+
+  I_LOG("upload video tensor success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //将背景图片存入Tensor
+  //支持float16、uint8类型，维度支持HW（二维）、HWC（三维）、其中“C”（通道数）为“1”或“3”
+  I_LOG("background size is w:{} h:{}", backgroundMatHost.cols, backgroundMatHost.rows);
+  std::vector<uint32_t> backgroundS{ (uint32_t)backgroundMatHost.rows, (uint32_t)backgroundMatHost.cols, 3 };
+  void* cpyBackgroundData = malloc(backgroundMatHost.rows * backgroundMatHost.step);
+  memcpy(cpyBackgroundData, backgroundMatHost.data, backgroundMatHost.rows * backgroundMatHost.step);
+  Tensor backgroundTmpTensor(cpyBackgroundData, backgroundS, TensorDType::UINT8);
+
+  I_LOG("fill background picture in Tensor success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+
+  //上传背景向量至Device侧
+  result = backgroundTmpTensor.ToDevice(deviceId);
+  if (result != APP_ERR_OK) {
+    E_LOG("upload background tensor to device failed");
+    return;
+  }
+
+  I_LOG("upload background tensor success, use {}ms", seeker::time::currentTime() - t);
+  t = seeker::time::currentTime();
+  
+  Tensor dstTensor, dstTmpTensor;
+  //调用背景替换接口
   Tensor maskTmp2Tensor;
   Tensor maskTensor;
   result = ConvertTo(maskTmpTensor, maskTmp2Tensor, TensorDType::FLOAT16);
@@ -96,93 +140,20 @@ void test() {
     E_LOG("AbsDiff mask tensor failed");
     return;
   }
-  I_LOG("process mask tensor success, use {}ms", seeker::time::currentTime() - t);
-  t = seeker::time::currentTime();
-  //
-  //Tensor tmpMaskDstTensor = maskTmp2Tensor.Clone();
-  //result = tmpMaskDstTensor.ToHost();
-  //if (result != APP_ERR_OK) {
-  //  E_LOG("download tmp mask tensor to host failed");
-  //  return;
-  //}
-  //
-  //cv::Mat tmpMaskMat(maskMatHost.rows, maskMatHost.cols, CV_16FC1);
-  //tmpMaskMat.data = (uint8_t*)tmpMaskDstTensor.GetData();
-  //cv::imwrite("tmpMask.png", tmpMaskMat);
 
-  //将视频图片存入Tensor
-  //支持float16、uint8类型，维度支持HW（二维）、HWC（三维）、其中“C”（通道数）为“1”或“3”
-  I_LOG("video size is w:{} h:{}", videoMatHost.cols, videoMatHost.rows);
-  std::vector<uint32_t> videoS{ (uint32_t)videoMatHost.rows, (uint32_t)videoMatHost.cols, 3 };
-  void* cpyVideoData = malloc(videoMatHost.rows * videoMatHost.step);
-  memcpy(cpyVideoData, videoMatHost.data, videoMatHost.rows * videoMatHost.step);
-  Tensor videoTensor(cpyVideoData, videoS, TensorDType::UINT8);
+  Tensor videoTensor;
+  ConvertTo(videoTmpTensor, videoTensor, TensorDType::FLOAT16);
 
-  I_LOG("fill video picture in Tensor success, use {}ms", seeker::time::currentTime() - t);
-  t = seeker::time::currentTime();
+  Tensor backgroundTensor;
+  ConvertTo(backgroundTmpTensor, backgroundTensor, TensorDType::FLOAT16);
 
-  //上传视频向量至Device侧
-  result = videoTensor.ToDevice(deviceId);
-  if (result != APP_ERR_OK) {
-    E_LOG("upload video tensor to device failed");
-    return;
-  }
-
-  I_LOG("upload video tensor success, use {}ms", seeker::time::currentTime() - t);
-  t = seeker::time::currentTime();
-
-  //Tensor tmpVideoDstTensor = videoTensor.Clone();
-  //result = tmpVideoDstTensor.ToHost();
-  //if (result != APP_ERR_OK) {
-  //  E_LOG("download tmp video tensor to host failed");
-  //  return;
-  //}
-  //
-  //cv::Mat tmpVideoMat(videoMatHost.rows, videoMatHost.cols, CV_8UC3);
-  //tmpVideoMat.data = (uint8_t*)tmpVideoDstTensor.GetData();
-  //cv::imwrite("tmpVideo.png", tmpVideoMat);
-
-  //将背景图片存入Tensor
-  //支持float16、uint8类型，维度支持HW（二维）、HWC（三维）、其中“C”（通道数）为“1”或“3”
-  I_LOG("background size is w:{} h:{}", backgroundMatHost.cols, backgroundMatHost.rows);
-  std::vector<uint32_t> backgroundS{ (uint32_t)backgroundMatHost.rows, (uint32_t)backgroundMatHost.cols, 3 };
-  void* cpyBackgroundData = malloc(backgroundMatHost.rows * backgroundMatHost.step);
-  memcpy(cpyBackgroundData, backgroundMatHost.data, backgroundMatHost.rows * backgroundMatHost.step);
-  Tensor backgroundTensor(cpyBackgroundData, backgroundS, TensorDType::UINT8);
-
-  I_LOG("fill background picture in Tensor success, use {}ms", seeker::time::currentTime() - t);
-  t = seeker::time::currentTime();
-
-  //上传背景向量至Device侧
-  result = backgroundTensor.ToDevice(deviceId);
-  if (result != APP_ERR_OK) {
-    E_LOG("upload background tensor to device failed");
-    return;
-  }
-
-  I_LOG("upload background tensor success, use {}ms", seeker::time::currentTime() - t);
-  t = seeker::time::currentTime();
-
-  //Tensor tmpBgDstTensor = backgroundTensor.Clone();
-  //result = tmpBgDstTensor.ToHost();
-  //if (result != APP_ERR_OK) {
-  //  E_LOG("download tmp video tensor to host failed");
-  //  return;
-  //}
-  //
-  //cv::Mat tmBgMat(backgroundMatHost.rows, backgroundMatHost.cols, CV_8UC3);
-  //tmBgMat.data = (uint8_t*)tmpBgDstTensor.GetData();
-  //cv::imwrite("tmpBg.png", tmBgMat);
-
-  //return;
-  
-  Tensor dstTensor;
-  //调用背景替换接口
-  result = BackgroundReplace(videoTensor, backgroundTensor, maskTensor, dstTensor);
+  result = BackgroundReplace(videoTensor, backgroundTensor, maskTensor, dstTmpTensor);
   if (result != APP_ERR_OK) {
     E_LOG("use BackgroundReplace failed");
     return;
   }
+  ConvertTo(dstTmpTensor, dstTensor, TensorDType::UINT8);
+  //I_LOG("dst channel:{}", dstTensor.GetShape().at(2));
 
   I_LOG("replace tensor success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();
@@ -304,51 +275,51 @@ void test2() {
   
   //CONVERT_1C8U_TO_1C32F(alphaMask_1C8U, alpha_C1);
   ConvertTo(maskTensor, mask16F, TensorDType::FLOAT16);
-  I_LOG("replace --- 1 ---");
+  D_LOG("replace --- 1 ---");
 
   Tensor div(maskS, TensorDType::FLOAT16, deviceId);
   Tensor::TensorMalloc(div);
   div.SetTensorValue(255.0f, true);
   //DivC_1C32F(alpha_C1, 255.0f, alpha_C1);
   Divide(mask16F, div, maskDivDst);
-  I_LOG("replace --- 2 ---"); 
+  D_LOG("replace --- 2 ---"); 
 
 
   std::vector<Tensor> tv{ maskDivDst.Clone(), maskDivDst.Clone(), maskDivDst.Clone() };
   Tensor mask;
   //DUP_TO_C3(alpha_C1, alpha);
   Merge(tv, mask);
-  I_LOG("replace --- 3 ---");
+  D_LOG("replace --- 3 ---");
 
   ConvertTo(videoTensor, video16F, TensorDType::FLOAT16);
-  I_LOG("replace --- 4 ---"); 
+  D_LOG("replace --- 4 ---"); 
   ConvertTo(backgroundTensor, bg16F, TensorDType::FLOAT16);
-  I_LOG("replace --- 5 ---"); 
+  D_LOG("replace --- 5 ---"); 
 
   Tensor videoMulDst;
   Multiply(video16F, mask, videoMulDst);
-  I_LOG("replace --- 6 ---"); 
+  D_LOG("replace --- 6 ---"); 
   Tensor value(std::vector<uint32_t>{ (uint32_t)maskMatHost.rows, (uint32_t)maskMatHost.cols, 3 }, TensorDType::FLOAT16, deviceId);
   Tensor::TensorMalloc(value);
   value.SetTensorValue(-1.0f, true);
   Tensor maskMulDst1, maskMulDst;
   Multiply(mask, value, maskMulDst1);
-  I_LOG("replace --- 7 ---"); 
+  D_LOG("replace --- 7 ---"); 
 
   value.SetTensorValue(1.0f, true);
   Add(maskMulDst1, value, maskMulDst);
-  I_LOG("replace --- 8 ---"); 
+  D_LOG("replace --- 8 ---"); 
 
   Tensor bgMulDst;
   Multiply(bg16F, maskMulDst, bgMulDst);
-  I_LOG("replace --- 9 ---"); 
+  D_LOG("replace --- 9 ---"); 
 
   Tensor addDst;
   Add(videoMulDst, bgMulDst, addDst);
-  I_LOG("replace --- 10 ---"); 
+  D_LOG("replace --- 10 ---"); 
 
   ConvertTo(addDst, dstTensor, TensorDType::UINT8);
-  I_LOG("replace --- 11 ---"); 
+  D_LOG("replace --- 11 ---"); 
 
   I_LOG("replace tensor success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();
@@ -385,9 +356,7 @@ int main(int argc, char* argv[]) {
   deviceId = std::atoi(argv[1]);
   MxInit();
   {
-    test2();
-    test2();
-    test2();
+    test();
   }
   MxDeInit();
   I_LOG("replace test finish");

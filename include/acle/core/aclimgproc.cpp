@@ -1,7 +1,9 @@
 #include "aclimgproc.h"
 
 namespace acle {
-	int overlayGpuAlpha(const GpuMat& src1, const GpuMat& src2, GpuMat& dst, int x, int y, MxBase::AscendStream& stream) {
+	Overlay::Overlay(const char* func) : function(func) {}
+
+	int Overlay::overlayGpuAlpha(const GpuMat& src1, const GpuMat& src2, GpuMat& dst, int x, int y, MxBase::AscendStream& stream) {
 		if (src1.empty() || src2.empty()) {
 			E_LOG("[aclimgproc::overlayGpuAlpha] input is empty");
 			return -1;
@@ -62,12 +64,11 @@ namespace acle {
 		return 0;
 	}
 
-	int overlayGpuRotate(const GpuMat& srcImg, GpuMat& dstImg, float angle, MxBase::AscendStream& stream) {
+	int Overlay::overlayGpuRotate(const GpuMat& srcImg, GpuMat& dstImg, float angle, MxBase::AscendStream& stream) {
 		if (angle < 0) { while (angle < 0) { angle = 360 + angle; } }
 		else if (angle > 360) { while (angle > 360) { angle = angle - 360; } }
 		if (angle == 0 || angle == 360) return 0;
 
-		using namespace own;
 		int newW = 0;
 		int newH = 0;
 		rotateNewSize(newW, newH, srcImg.cols, srcImg.rows, angle);
@@ -85,23 +86,80 @@ namespace acle {
 		return 0;
 	}
 
-	namespace own {
-		std::vector<std::vector<float>> getRotationMatrix2D(Point2f center, float angle, double scale) {
-			float angleRad = angle * M_PI / 180.0;
-			float alpha = cos(angleRad);
-			float beta = sin(angleRad);
-		
-			std::vector<std::vector<float>> rotationMatrix = {
-					{alpha, beta, (1 - alpha) * center.x - beta * center.y},
-					{-beta, alpha, beta * center.x + (1 - alpha) * center.y}
-			};
-		
-			return rotationMatrix;
+	void Overlay::blend(const GpuMat& above_3C8U, const GpuMat& below_3C8U, const GpuMat& alphaMask_1C8U, GpuMat& dst_3C8U, MxBase::AscendStream& stream) {
+		if (above_3C8U.size() != below_3C8U.size()) {
+			throw std::runtime_error("blend error: above_3C8U.size() != below_3C8U.size()");
 		}
-		
-		void rotateNewSize(int& new_w, int& new_h, int old_w, int old_h, int angle) {
-			new_w = fabs(sin(M_PI * (double)(angle / 180.0))) * old_h + fabs(cos(M_PI * (double)(angle / 180.0))) * old_w;
-			new_h = fabs(sin(M_PI * (double)(angle / 180.0))) * old_w + fabs(cos(M_PI * (double)(angle / 180.0))) * old_h;
+		if (above_3C8U.size() != alphaMask_1C8U.size()) {
+			throw std::runtime_error("blend error: above_3C8U.size() != alphaMask_1C8U.size()");
 		}
+
+		I_LOG("above size is {}x{}, current size is {}x{}", above_3C8U.size().width, above_3C8U.size().height, currentSize.width, currentSize.height);
+		
+		if (above_3C8U.size() != currentSize) {
+			I_LOG("1");
+			currentSize = above_3C8U.size();
+			int w = currentSize.width;
+			int h = currentSize.height;
+			div = GpuMat(Size(w, h), ACLE_8UC1, false, MxBase::TensorDType::FLOAT16);
+			div.tensor.SetTensorValue(255.0f, true);
+			value = GpuMat(Size(w, h), ACLE_8UC3, false, MxBase::TensorDType::FLOAT16);
+		}
+		dst_3C8U = GpuMat(above_3C8U);
+
+		MxBase::Tensor mask16F;
+		MxBase::Tensor video16F;
+		MxBase::Tensor bg16F;
+		MxBase::Tensor maskDivDst;
+
+		D_LOG("replace --- 0 ---");
+		MxBase::ConvertTo(alphaMask_1C8U.tensor, mask16F, MxBase::TensorDType::FLOAT16);
+		D_LOG("replace --- 1 ---");
+		MxBase::Divide(mask16F, div.tensor, maskDivDst);
+		D_LOG("replace --- 2 ---");
+		std::vector<MxBase::Tensor> tv{ maskDivDst.Clone(), maskDivDst.Clone(), maskDivDst.Clone() };
+		MxBase::Tensor mask;
+		MxBase::Merge(tv, mask);
+		D_LOG("replace --- 3 ---");
+		MxBase::ConvertTo(above_3C8U.tensor, video16F, MxBase::TensorDType::FLOAT16);
+		D_LOG("replace --- 4 ---");
+		MxBase::ConvertTo(below_3C8U.tensor, bg16F, MxBase::TensorDType::FLOAT16);
+		D_LOG("replace --- 5 ---");
+		MxBase::Tensor videoMulDst;
+		MxBase::Multiply(video16F, mask, videoMulDst);
+		D_LOG("replace --- 6 ---");
+		value.tensor.SetTensorValue(-1.0f, true);
+		MxBase::Tensor maskMulDst1, maskMulDst;
+		MxBase::Multiply(mask, value.tensor, maskMulDst1);
+		D_LOG("replace --- 7 ---");
+		value.tensor.SetTensorValue(1.0f, true);
+		MxBase::Add(maskMulDst1, value.tensor, maskMulDst);
+		D_LOG("replace --- 8 ---");
+		MxBase::Tensor bgMulDst;
+		MxBase::Multiply(bg16F, maskMulDst, bgMulDst);
+		D_LOG("replace --- 9 ---");
+		MxBase::Tensor addDst;
+		MxBase::Add(videoMulDst, bgMulDst, addDst);
+		D_LOG("replace --- 10 ---");
+		MxBase::ConvertTo(addDst, dst_3C8U.tensor, MxBase::TensorDType::UINT8);
+		D_LOG("replace --- 11 ---");
+	}
+
+	std::vector<std::vector<float>> Overlay::getRotationMatrix2D(Point2f center, float angle, double scale) {
+		float angleRad = angle * M_PI / 180.0;
+		float alpha = cos(angleRad);
+		float beta = sin(angleRad);
+		
+		std::vector<std::vector<float>> rotationMatrix = {
+				{alpha, beta, (1 - alpha) * center.x - beta * center.y},
+				{-beta, alpha, beta * center.x + (1 - alpha) * center.y}
+		};
+		
+		return rotationMatrix;
+	}
+		
+	void Overlay::rotateNewSize(int& new_w, int& new_h, int old_w, int old_h, int angle) {
+		new_w = fabs(sin(M_PI * (double)(angle / 180.0))) * old_h + fabs(cos(M_PI * (double)(angle / 180.0))) * old_w;
+		new_h = fabs(sin(M_PI * (double)(angle / 180.0))) * old_w + fabs(cos(M_PI * (double)(angle / 180.0))) * old_h;
 	}
 }
