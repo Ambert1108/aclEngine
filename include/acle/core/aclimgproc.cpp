@@ -94,10 +94,9 @@ namespace acle {
 			throw std::runtime_error("blend error: above_3C8U.size() != alphaMask_1C8U.size()");
 		}
 
-		I_LOG("above size is {}x{}, current size is {}x{}", above_3C8U.size().width, above_3C8U.size().height, currentSize.width, currentSize.height);
+		//I_LOG("above size is {}x{}, current size is {}x{}", above_3C8U.size().width, above_3C8U.size().height, currentSize.width, currentSize.height);
 		
 		if (above_3C8U.size() != currentSize) {
-			I_LOG("1");
 			currentSize = above_3C8U.size();
 			int w = currentSize.width;
 			int h = currentSize.height;
@@ -143,6 +142,41 @@ namespace acle {
 		D_LOG("replace --- 10 ---");
 		MxBase::ConvertTo(addDst, dst_3C8U.tensor, MxBase::TensorDType::UINT8);
 		D_LOG("replace --- 11 ---");
+	}
+
+	int Overlay::blend2(const GpuMat& above_3C8U, GpuMat& below_3C8U, const GpuMat& alphaMask_1C8U, GpuMat& dst_3C8U, MxBase::AscendStream& stream) {
+		if (above_3C8U.size() != below_3C8U.size()) {
+			E_LOG("[aclimgproc::blend] above_3C8U.size() != below_3C8U.size()");
+			return -1;
+		}
+		if (above_3C8U.size() != alphaMask_1C8U.size()) {
+			E_LOG("[aclimgproc::blend] above_3C8U.size() != alphaMask_1C8U.size()");
+			return -1;
+		}
+		dst_3C8U = GpuMat(above_3C8U);
+
+		MxBase::Tensor maskTmpTensor, maskTensor;
+		APP_ERROR result = APP_ERR_OK;
+		result = MxBase::ConvertTo(alphaMask_1C8U.tensor, maskTmpTensor, MxBase::TensorDType::FLOAT16);
+		if (result != APP_ERR_OK) {
+			E_LOG("[aclimgproc::blend] convert mask tensor to FLOAT16 failed");
+			return -1;
+		}
+
+		//mask二值化避免花边
+		result = MxBase::ThresholdBinary(maskTmpTensor, maskTensor, 125, 1);
+		if (result != APP_ERR_OK) {
+			E_LOG("[aclimgproc::blend] ThresholdBinary mask tensor failed");
+			return -1;
+		}
+
+		result = MxBase::BackgroundReplace(below_3C8U.tensor, above_3C8U.tensor, maskTensor, dst_3C8U.tensor);
+		if (result != APP_ERR_OK) {
+			E_LOG("[aclimgproc::blend] use BackgroundReplace failed");
+			return -1;
+		}
+		I_LOG("bg replace success");
+		return 0;
 	}
 
 	std::vector<std::vector<float>> Overlay::getRotationMatrix2D(Point2f center, float angle, double scale) {

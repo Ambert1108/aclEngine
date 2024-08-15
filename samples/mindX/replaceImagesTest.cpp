@@ -86,13 +86,13 @@ void test() {
   std::vector<uint32_t> videoS{ (uint32_t)videoMatHost.rows, (uint32_t)videoMatHost.cols, 3 };
   void* cpyVideoData = malloc(videoMatHost.rows * videoMatHost.step);
   memcpy(cpyVideoData, videoMatHost.data, videoMatHost.rows * videoMatHost.step);
-  Tensor videoTmpTensor(cpyVideoData, videoS, TensorDType::UINT8);
+  Tensor videoTensor(cpyVideoData, videoS, TensorDType::UINT8);
 
   I_LOG("fill video picture in Tensor success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();
 
   //上传视频向量至Device侧
-  result = videoTmpTensor.ToDevice(deviceId);
+  result = videoTensor.ToDevice(deviceId);
   if (result != APP_ERR_OK) {
     E_LOG("upload video tensor to device failed");
     return;
@@ -107,13 +107,13 @@ void test() {
   std::vector<uint32_t> backgroundS{ (uint32_t)backgroundMatHost.rows, (uint32_t)backgroundMatHost.cols, 3 };
   void* cpyBackgroundData = malloc(backgroundMatHost.rows * backgroundMatHost.step);
   memcpy(cpyBackgroundData, backgroundMatHost.data, backgroundMatHost.rows * backgroundMatHost.step);
-  Tensor backgroundTmpTensor(cpyBackgroundData, backgroundS, TensorDType::UINT8);
+  Tensor backgroundTensor(cpyBackgroundData, backgroundS, TensorDType::UINT8);
 
   I_LOG("fill background picture in Tensor success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();
 
   //上传背景向量至Device侧
-  result = backgroundTmpTensor.ToDevice(deviceId);
+  result = backgroundTensor.ToDevice(deviceId);
   if (result != APP_ERR_OK) {
     E_LOG("upload background tensor to device failed");
     return;
@@ -122,9 +122,9 @@ void test() {
   I_LOG("upload background tensor success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();
   
-  Tensor dstTensor, dstTmpTensor;
+  Tensor dstTensor;
   //调用背景替换接口
-  Tensor maskTmp2Tensor;
+  Tensor maskTmp2Tensor, maskTmp3Tensor;
   Tensor maskTensor;
   result = ConvertTo(maskTmpTensor, maskTmp2Tensor, TensorDType::FLOAT16);
   if (result != APP_ERR_OK) {
@@ -132,28 +132,28 @@ void test() {
     return;
   }
 
-  Tensor oneTensor(maskS, TensorDType::FLOAT16, deviceId);
-  Tensor::TensorMalloc(oneTensor);
-  oneTensor.SetTensorValue(-1.0f, true);
-  result = AbsDiff(maskTmp2Tensor, oneTensor, maskTensor);
+  //mask二值化避免花边
+  result = ThresholdBinary(maskTmp2Tensor, maskTensor, 125, 1);
   if (result != APP_ERR_OK) {
-    E_LOG("AbsDiff mask tensor failed");
+    E_LOG("ThresholdBinary mask tensor failed");
     return;
   }
 
-  Tensor videoTensor;
-  ConvertTo(videoTmpTensor, videoTensor, TensorDType::FLOAT16);
 
-  Tensor backgroundTensor;
-  ConvertTo(backgroundTmpTensor, backgroundTensor, TensorDType::FLOAT16);
+  //Tensor oneTensor(maskS, TensorDType::FLOAT16, deviceId);
+  //Tensor::TensorMalloc(oneTensor);
+  //oneTensor.SetTensorValue(-1.0f, true);
+  //result = AbsDiff(maskTmp3Tensor, oneTensor, maskTensor);
+  //if (result != APP_ERR_OK) {
+  //  E_LOG("AbsDiff mask tensor failed");
+  //  return;
+  //}
 
-  result = BackgroundReplace(videoTensor, backgroundTensor, maskTensor, dstTmpTensor);
+  result = BackgroundReplace(backgroundTensor, videoTensor, maskTensor, dstTensor);
   if (result != APP_ERR_OK) {
     E_LOG("use BackgroundReplace failed");
     return;
   }
-  ConvertTo(dstTmpTensor, dstTensor, TensorDType::UINT8);
-  //I_LOG("dst channel:{}", dstTensor.GetShape().at(2));
 
   I_LOG("replace tensor success, use {}ms", seeker::time::currentTime() - t);
   t = seeker::time::currentTime();

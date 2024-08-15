@@ -152,7 +152,7 @@ namespace acle {
 			E_LOG("get download data is nullptr");
 			return;
 		}
-		m.create(rows, cols, type);
+		m.create(gm.rows, gm.cols, type);
 		m.data = (uint8_t*)gm.tensor.GetData();
 		if (m.empty()) {
 			E_LOG("download data failed, mat is empty");
