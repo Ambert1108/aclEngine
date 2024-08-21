@@ -236,6 +236,8 @@ int main(int argc, char* argv[]) {
     MxBase::AscendStream stream(deviceId);
     stream.CreateAscendStream();
     maskBlendTest2(MxBase::AscendStream::DefaultStream());
+    maskBlendTest2(MxBase::AscendStream::DefaultStream());
+    maskBlendTest2(MxBase::AscendStream::DefaultStream());
     overlay.reset();
   }
   MxBase::MxDeInit();
