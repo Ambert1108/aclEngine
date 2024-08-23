@@ -5,7 +5,7 @@
 // @revision: [Ambert@2024.7.24]
 
 #pragma once
-#include "utils.hpp"
+#include "utils.h"
 
 #include "MxBase/E2eInfer/Tensor/Tensor.h"
 #include "opencv2/core/mat.hpp"
@@ -88,7 +88,10 @@ namespace acle {
 
     GpuMat(const cv::Mat& m, bool flag = false, MxBase::TensorDType dataType = MxBase::TensorDType::UINT8);
 
-    static void setDevice(int32_t id);
+    //只有data在Device端才可以使用以下构造函数
+    GpuMat(int rows, int cols, int type, void* data, size_t dataSize);
+
+    GpuMat(Size size, int type, void* data, size_t dataSize);
 
     void download(cv::Mat& m, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
@@ -102,16 +105,18 @@ namespace acle {
 
     Size size() const;
 
+    void release();
+
     int rows, cols, channels;
     size_t step;
 
     MxBase::Tensor tensor;
   private:
-    static int32_t deviceId;
     void* data;
     Size matSize;
 
     friend class Overlay;
+    friend class Transfer;
   };
 
   //namespace cuda { 

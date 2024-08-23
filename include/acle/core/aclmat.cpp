@@ -21,10 +21,7 @@ namespace acle {
 	GpuMat::GpuMat() : rows(0.0), cols(0.0), channels(0), step(0), data(nullptr) {};
 
 	GpuMat::~GpuMat() {
-		if (data) {
-			free(data);
-			data = nullptr;
-		}
+		release();
 	};
 
 	GpuMat::GpuMat(const GpuMat& gm) {
@@ -114,7 +111,7 @@ namespace acle {
 			// use HWC
 			this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, dataType);
 		}
-		this->tensor.ToDevice(deviceId);
+		this->tensor.ToDevice(acl::deviceId);
 	}
 
 	GpuMat::GpuMat(Size size, int type, bool flag, MxBase::TensorDType dataType) 
@@ -124,9 +121,34 @@ namespace acle {
 		upload(m, flag, dataType);
 	}
 
-	int32_t GpuMat::deviceId = -1;
+	GpuMat::GpuMat(int rows, int cols, int type, void* data, size_t dataSize) {
+		this->rows = rows;
+		this->cols = cols;
+		switch (type) {
+		case ACLE_8UC1:
+			this->channels = 1;
+			break;
+		case ACLE_8UC3:
+			this->channels = 3;
+			break;
+		case ACLE_8UC4:
+			this->channels = 4;
+			break;
+		default:
+			this->channels = 3;
+			break;
+		}
+		this->step = step;
+		this->matSize.width = cols;
+		this->matSize.height = rows;
+		//size_t size = (size_t)this->rows * this->step;
+		this->data = nullptr;
+		this->data = malloc(dataSize);
+		memcpy(this->data, data, dataSize);
+		this->tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)this->rows, (uint32_t)this->cols, (uint32_t)this->channels }, MxBase::TensorDType::UINT8, acl::deviceId);
+	}
 
-	void GpuMat::setDevice(int32_t id) { deviceId = id; }
+	GpuMat::GpuMat(Size size, int type, void* data, size_t dataSize) : GpuMat(size.height, size.width, type, data, dataSize) {}
 
 	void GpuMat::download(cv::Mat& m, MxBase::AscendStream& stream) {
 		if (empty()) return;
@@ -192,7 +214,7 @@ namespace acle {
 			// use HWC
 			tensor = MxBase::Tensor(data, std::vector<uint32_t>{ (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, dataType);
 		}
-		tensor.ToDevice(deviceId);
+		tensor.ToDevice(acl::deviceId);
 	}
 
 	GpuMat GpuMat::clone(MxBase::AscendStream& stream) const {
@@ -206,10 +228,17 @@ namespace acle {
 	}
 
 	bool GpuMat::empty() const {
-		return tensor.IsEmpty() || !tensor.GetData();
+		return tensor.IsEmpty() && !data;
 	}
 
 	Size GpuMat::size() const {
 		return matSize;
+	}
+
+	void GpuMat::release() {
+		if (data) {
+			free(data);
+			data = nullptr;
+		}
 	}
 }

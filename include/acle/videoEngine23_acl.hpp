@@ -115,30 +115,12 @@ namespace acle {
       }
       ret = avcodec_receive_frame(codec_ctx, frame);
       if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        //E_LOG("Error decoding");
+        W_LOG("decode prepare");
         return 1;
       }
       else if (ret < 0) {
         E_LOG("Error during decoding");
         return -1;
-      }
-      return 0;
-    }
-
-    int getFrame(const AVPacket* packet, AVFrame& frame) {
-      ret = avcodec_send_packet(codec_ctx, packet);
-      if (ret < 0) {
-        E_LOG("Error sending a packet for decoding");
-        return 2;
-      }
-      ret = avcodec_receive_frame(codec_ctx, &frame);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        //E_LOG("Error decoding");
-        return 1;
-      }
-      else if (ret < 0) {
-        E_LOG("Error during decoding");
-        return 1;
       }
       return 0;
     }
@@ -174,8 +156,7 @@ namespace acle {
       if (!(hw_frames_ref = av_hwframe_ctx_alloc(hwDeviceContext))) {
         throw std::runtime_error("Failed to create hw frame context");
       }
-      if (fmt == AV_PIX_FMT_ASCEND) fmt = AV_PIX_FMT_YUV420P;
-      format = fmt;
+      if (fmt == AV_PIX_FMT_ASCEND) format = AV_PIX_FMT_NV12;
       useGPU = true;
     }
 
@@ -199,7 +180,7 @@ namespace acle {
       av_dict_set(&dict, "preset", "p1", 0);
       av_dict_set(&dict, "tune", "ull", 0);
       av_dict_set_int(&dict, "rc", 2, 0);
-      av_dict_set(&dict, "profile", "baseline", 0);
+      //av_dict_set(&dict, "profile", "baseline", 0);
       av_dict_set_int(&dict, "level", 31, 0);
       av_dict_set_int(&dict, "cbr", 1, 0);
       av_dict_set_int(&dict, "forced-idr", 1, 0);
@@ -244,7 +225,7 @@ namespace acle {
             W_LOG("Encode will automatic settings AVDictionary dicts");
             av_dict_set_int(&dict, "delay", 0, 0);
             av_dict_set_int(&dict, "forced-idr", 1, 0);
-            av_dict_set(&dict, "profile", "baseline", 0);
+            //av_dict_set(&dict, "profile", "baseline", 0);
             while ((pEntry = av_dict_get(dict, "", pEntry, AV_DICT_IGNORE_SUFFIX))) {
               //I_LOG("metadata : {}={}\n", pEntry->key, pEntry->value);
             }
@@ -305,6 +286,7 @@ namespace acle {
         else {
           E_LOG("ERROR: send frame failed, errCode={}", err);
         }
+        return -1;
       }
       err = avcodec_receive_packet(encodec_ctx, packet);
       if (err < 0) {

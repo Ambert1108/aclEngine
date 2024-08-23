@@ -6,19 +6,15 @@
 
 #pragma once
 #include "core/types.h"
-#include "core/utils.hpp"
+#include "core/utils.h"
 #include "core/safequeue.h"
 #include "core/error.h"
 #include "core/aclimgproc.h"
+#include "core/aclimgtrans.h"
 #include "core/frame.h"
  
 #include "acl/acl.h"
 #include "MxBase/MxBase.h"
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-}
 
 #include "seeker/common.h"
 #include "seeker/logger.h"

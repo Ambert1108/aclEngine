@@ -1,32 +1,6 @@
-// @brief: 昇腾操作工具集合
-// @copyright: Copyright seekloud 2024
-// @birth: [Ambert@2024.6.17]
-// @version: V0.0.1
-// @revision: [Ambert@2024.6.17]
-#pragma once
+#include "utils.h"
 
-#include <unistd.h>
-#include <memory>
-#include "types.h"
-
-#include "seeker/logger.h"
-#include "seeker/loggerApi.h"
-
-namespace acle{
-  enum CopyDirection {
-    TO_DEVICE = 0,
-    TO_HOST,
-    INVALID_COPY_DIRECT
-  };
-
-  enum MemoryType {
-    NORMAL = 0,
-    HOST,
-    DEVICE,
-    DVPP,
-    INVALID
-  };
-
+namespace acle {
   inline aclrtMemcpyKind getCopyPolicy(aclrtRunMode srcDev, CopyDirection direct, MemoryType memType) {
     aclrtMemcpyKind policy = ACL_MEMCPY_HOST_TO_HOST;
 
@@ -43,7 +17,7 @@ namespace acle{
 
     return policy;
   };
-  
+
   inline void* mallocMemory(uint32_t dataSize, MemoryType memType) {
     void* buffer = nullptr;
     aclError aclRet = ACL_SUCCESS;
@@ -73,7 +47,7 @@ namespace acle{
     }
     return buffer;
   };
-  
+
   inline void freeMemory(void* mem, MemoryType memType) {
     switch (memType) {
     case NORMAL:
@@ -93,20 +67,20 @@ namespace acle{
       break;
     }
   };
-  
+
   inline void* copyData(const void* data, uint32_t size, aclrtMemcpyKind policy, MemoryType memType) {
     void* buffer = mallocMemory(size, memType);
     if (buffer == nullptr) {
       return nullptr;
     }
-    
+
     aclError aclRet = aclrtMemcpy(buffer, size, data, size, policy);
     if (aclRet != ACL_SUCCESS) {
       E_LOG("Copy data to device failed, ret is {}", aclRet);
       freeMemory(buffer, memType);
       return nullptr;
     }
-    
+
     return buffer;
   };
 
@@ -119,9 +93,9 @@ namespace acle{
         data, size, curRunMode, memType);
       return nullptr;
     }
-    
+
     aclrtMemcpyKind policy = getCopyPolicy(curRunMode, TO_DEVICE, memType);
-    
+
     return copyData(data, size, policy, memType);
   };
 
@@ -134,10 +108,13 @@ namespace acle{
         data, size, curRunMode, memType);
       return nullptr;
     }
-    
+
     aclrtMemcpyKind policy = getCopyPolicy(curRunMode, TO_HOST, memType);
-    
+
     return copyData(data, size, policy, memType);
   };
 
+  int32_t acl::deviceId = -1;
+
+  void acl::setDevice(int32_t id) { deviceId = id; }
 }

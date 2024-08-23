@@ -39,6 +39,4 @@ namespace acle {
 
 	typedef std::shared_ptr<Overlay> OverlaySPtr;
 	typedef std::unique_ptr<Overlay> OverlayUPtr;
-
-
 }
