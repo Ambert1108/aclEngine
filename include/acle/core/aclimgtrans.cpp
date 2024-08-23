@@ -71,7 +71,7 @@ namespace acle {
 		hwCtx = av_buffer_ref(buf);
 	}
 
-	int Transfer::gpu_transfer_frame_to_mat(const AVFrame* src, GpuMat& dst, int w, int h) {
+	int Transfer::gpu_transfer_frame_to_mat(const AVFrame* src, GpuMat& dst, int32_t w, int64_t h) {
 		if (src->format != 119 || checkHwFrameSwFormat(src) != 23) {
 			W_LOG("[aclimgtrans::frame_to_mat] src frame format should be ascend(nv12)");
 			return -2;
@@ -80,38 +80,29 @@ namespace acle {
 		if (w == 0) w = src->width;
 		if (h == 0) h = src->height;
 
-		size_t size = src->linesize[0] * h + src->linesize[1] * (h * 0.5);
-		std::shared_ptr<uint8_t> data(src->data[0]);
-		//MxBase::Image image(data, size, acl::deviceId, MxBase::Size(w, h));
-		//I_LOG("image alloc success");
-		////const std::vector<uint32_t> &shape, const MxBase::TensorDType &dataType, const int32_t &deviceId = -1
-		//MxBase::Tensor tensor(std::vector<uint32_t>{(uint32_t)h, (uint32_t)w, 3}, MxBase::TensorDType::UINT8, acl::deviceId);
-		//MxBase::Tensor::TensorMalloc(tensor);
-		//I_LOG("tmp tensor alloc success");
-		//tensor = image.ConvertToTensor();
-		//dst = GpuMat(h, w, ACLE_8UC3);
-		//try { dst.tensor = image.ConvertToTensor(false, false); }
-		//catch (std::exception& ex) {
-		//	E_LOG("[aclimgtrans::frame_to_mat] catch exception:{}", ex.what());
-		//	return -1;
-		//}
-		if (!dst.empty()) dst.release();
-		size_t ySize = src->linesize[0] * h; // Y 分量的大小
-		size_t uvSize = src->linesize[1] * (h / 2); // UV 分量的大小
-		dst = GpuMat(h, w, ACLE_8UC3);
-		dst.data = malloc(ySize + uvSize);
-		// 拷贝 Y 分量数据
-		memcpy(dst.data, src->data[0], ySize);
+		uint8_t* yPlane = src->data[0]; // Y 平面指针
+		uint8_t* uvPlane = src->data[1]; // UV 平面指针
 
-		// 拷贝 UV 分量数据
-		memcpy(static_cast<uint8_t*>(dst.data) + ySize, src->data[1], uvSize);
-		dst.tensor = MxBase::Tensor(dst.data, std::vector<uint32_t>{(uint32_t)h, (uint32_t)w, 3}, MxBase::TensorDType::UINT8, acl::deviceId);
+		// 计算总数据大小
+		size_t totalSize = src->linesize[0] * h + src->linesize[1] * (h / 2);
+		if (data) data.reset();
+		void* raw = copyData(src->data[0], totalSize, aclrtMemcpyKind::ACL_MEMCPY_DEVICE_TO_DEVICE, MemoryType::DVPP);
+		data = SHARED_PTR_DVPP_BUF(raw);
+		MxBase::Image image(data, totalSize, acl::deviceId, MxBase::Size(w, h));
+		MxBase::Tensor tensor(std::vector<uint32_t>{(uint32_t)h, (uint32_t)w, 3}, MxBase::TensorDType::UINT8, acl::deviceId);
+		MxBase::Tensor::TensorMalloc(tensor);
+		tensor = image.ConvertToTensor();
+		dst = GpuMat(h, w, ACLE_8UC3);
+		try { dst.tensor = image.ConvertToTensor(false, false); }
+		catch (std::exception& ex) {
+			E_LOG("[aclimgtrans::frame_to_mat] catch exception:{}", ex.what());
+			return -1;
+		}
 
 		if (dst.tensor.IsEmpty()) {
 			W_LOG("[aclimgtrans::frame_to_mat] convert frame to mat failed");
 			return -1;
 		}
-		
 		return 0;
 	}
 

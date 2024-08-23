@@ -14,6 +14,7 @@ extern "C" {
 	#include <libavformat/avformat.h>
 }
 
+#include "utils.h"
 #include "aclmat.h"
 
 namespace acle {
@@ -25,7 +26,7 @@ namespace acle {
 
 		void enableHWDevice(AVBufferRef* buf);
 
-		int gpu_transfer_frame_to_mat(const AVFrame* src_frame, GpuMat& dstMat, int w = 0, int h = 0);
+		int gpu_transfer_frame_to_mat(const AVFrame* src_frame, GpuMat& dstMat, int32_t w = 0, int64_t h = 0);
 
 		int gpu_transfer_mat_to_frame(GpuMat src_mat, AVFrame*& cuda_frame, AVPixelFormat target_format);
 
@@ -33,5 +34,6 @@ namespace acle {
 		const char* function = nullptr;
 		AVFrame* outFrame = nullptr;
 		AVBufferRef* hwCtx = nullptr;
+		std::shared_ptr<uint8_t> data = nullptr;
 	};
 }

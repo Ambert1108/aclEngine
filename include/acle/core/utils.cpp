@@ -1,7 +1,7 @@
 #include "utils.h"
 
 namespace acle {
-  inline aclrtMemcpyKind getCopyPolicy(aclrtRunMode srcDev, CopyDirection direct, MemoryType memType) {
+  aclrtMemcpyKind getCopyPolicy(aclrtRunMode srcDev, CopyDirection direct, MemoryType memType) {
     aclrtMemcpyKind policy = ACL_MEMCPY_HOST_TO_HOST;
 
     if (direct == TO_DEVICE) {
@@ -18,7 +18,7 @@ namespace acle {
     return policy;
   };
 
-  inline void* mallocMemory(uint32_t dataSize, MemoryType memType) {
+  void* mallocMemory(uint32_t dataSize, MemoryType memType) {
     void* buffer = nullptr;
     aclError aclRet = ACL_SUCCESS;
     switch (memType) {
@@ -48,7 +48,7 @@ namespace acle {
     return buffer;
   };
 
-  inline void freeMemory(void* mem, MemoryType memType) {
+  void freeMemory(void* mem, MemoryType memType) {
     switch (memType) {
     case NORMAL:
       delete[]((uint8_t*)mem);
@@ -68,7 +68,7 @@ namespace acle {
     }
   };
 
-  inline void* copyData(const void* data, uint32_t size, aclrtMemcpyKind policy, MemoryType memType) {
+  void* copyData(const void* data, uint32_t size, aclrtMemcpyKind policy, MemoryType memType) {
     void* buffer = mallocMemory(size, memType);
     if (buffer == nullptr) {
       return nullptr;
@@ -84,7 +84,7 @@ namespace acle {
     return buffer;
   };
 
-  inline void* copyDataToDevice(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType) {
+  void* copyDataToDevice(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType) {
     if ((data == nullptr) || (size == 0) ||
       ((curRunMode != ACL_HOST) && (curRunMode != ACL_DEVICE)) ||
       (memType >= INVALID) || (memType == HOST)) {
@@ -99,7 +99,7 @@ namespace acle {
     return copyData(data, size, policy, memType);
   };
 
-  inline void* copyDataToHost(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType) {
+  void* copyDataToHost(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType) {
     if ((data == nullptr) || (size == 0) ||
       ((curRunMode != ACL_HOST) && (curRunMode != ACL_DEVICE)) ||
       ((memType != HOST) && (memType != NORMAL))) {

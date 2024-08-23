@@ -27,17 +27,17 @@ namespace acle{
     INVALID
   };
 
-  inline aclrtMemcpyKind getCopyPolicy(aclrtRunMode srcDev, CopyDirection direct, MemoryType memType);
+  aclrtMemcpyKind getCopyPolicy(aclrtRunMode srcDev, CopyDirection direct, MemoryType memType);
   
-  inline void* mallocMemory(uint32_t dataSize, MemoryType memType);
+  void* mallocMemory(uint32_t dataSize, MemoryType memType);
   
-  inline void freeMemory(void* mem, MemoryType memType);
+  void freeMemory(void* mem, MemoryType memType);
   
-  inline void* copyData(const void* data, uint32_t size, aclrtMemcpyKind policy, MemoryType memType);
+  void* copyData(const void* data, uint32_t size, aclrtMemcpyKind policy, MemoryType memType);
 
-  inline void* copyDataToDevice(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType);
+  void* copyDataToDevice(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType);
 
-  inline void* copyDataToHost(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType);
+  void* copyDataToHost(const void* data, uint32_t size, aclrtRunMode curRunMode, MemoryType memType);
 
   struct acl {
     static void setDevice(int32_t id);

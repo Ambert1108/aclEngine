@@ -43,16 +43,16 @@ void saveFileYUV(AVFrame& inFrame, FILE* fileStream) {
 
 int main(int argc, char* argv[]) {
 
-  I_LOG("start decoder test");
-  if (argc < 4) {
-    std::cout
-      << "Usage <deviceId> <input> <output>"
-      << std::endl;
-    exit(0);
-  }
-
   MxBase::MxInit(); 
   {
+    I_LOG("start decoder test");
+    if (argc < 4) {
+      std::cout
+        << "Usage <deviceId> <input> <output>"
+        << std::endl;
+      exit(0);
+    }
+
     AVPacket* pkt = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
     AVFrame* sftFrame = av_frame_alloc();
