@@ -25,6 +25,8 @@ namespace acle {
 
 		int blend2(const GpuMat& above_3C8U, GpuMat& below_3C8U, const GpuMat& alphaMask_1C8U, GpuMat& dst_3C8U, MxBase::AscendStream& stream = MxBase::AscendStream::DefaultStream());
 
+		static int overlayGpuScale(const GpuMat& srcImg, GpuMat& dstImg, int w, int h);
+
 	private:
 		std::vector<std::vector<float>> getRotationMatrix2D(Point2f center, float angle, double scale);
 

@@ -18,6 +18,32 @@ namespace acle {
 	template class Size__<float>;
 	template class Size__<double>;
 
+	template<typename _T> Scalar_<_T>::Scalar_() : val{ 0, 0, 0, 0 } {};
+	template<typename _T> Scalar_<_T>::Scalar_(_T v0, _T v1, _T v2, _T v3) : val{ v0, v1, v2, v3 } {};
+	template<typename _T> Scalar_<_T>::Scalar_(const Scalar_& s) {
+		for (int i = 0; i < 4; ++i) val[i] = s.val[i];
+	}
+
+	template<typename _T> Scalar_<_T>::Scalar_(Scalar_&& s) noexcept {
+		for (int i = 0; i < 4; ++i) val[i] = std::move(s.val[i]);
+	}
+
+	template<typename _T> Scalar_<_T>& Scalar_<_T>::operator=(const Scalar_& s) {
+		if (this == &s) return *this;
+		for (int i = 0; i < 4; ++i) val[i] = s.val[i];
+		return *this;
+	}
+
+	template<typename _T> Scalar_<_T>& Scalar_<_T>::operator=(Scalar_&& s) noexcept {
+		if (this == &s) return *this;
+		for (int i = 0; i < 4; ++i) val[i] = std::move(s.val[i]);
+		return *this;
+	}
+
+	template<typename _T> Scalar_<_T> Scalar_<_T>::all(_T v0) {
+		return Scalar_<_T>(v0, v0, v0, v0);
+	}
+
 	GpuMat::GpuMat() : rows(0.0), cols(0.0), channels(0), step(0), data(nullptr) {};
 
 	GpuMat::~GpuMat() {
@@ -240,5 +266,35 @@ namespace acle {
 			free(data);
 			data = nullptr;
 		}
+	}
+
+	void GpuMat::create(int rows, int cols, int type) {
+		rows = rows;
+		cols = cols;
+		switch (type) {
+		case ACLE_8UC1:
+			channels = 1;
+			break;
+		case ACLE_8UC3:
+			channels = 3;
+			break;
+		case ACLE_8UC4:
+			channels = 4;
+			break;
+		default:
+			channels = 3;
+			break;
+		}
+		tensor = MxBase::Tensor(std::vector<uint32_t>{ (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, MxBase::TensorDType::UINT8, acl::deviceId);
+		tensor.SetTensorValue(0);
+	}
+
+	void GpuMat::create(Size size, int type) {
+		return create(size.height, size.width, type);
+	}
+
+	void GpuMat::setTo(Scalar s) {
+		if (tensor.IsEmpty()) return;
+		tensor.SetTensorValue(static_cast<uint8_t>(s.val[3]));
 	}
 }

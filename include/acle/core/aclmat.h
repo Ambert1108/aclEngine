@@ -68,6 +68,25 @@ namespace acle {
 
   typedef MxBase::Rect Rect;
 
+  template <typename _T> class Scalar_ {
+  public:
+    Scalar_();
+    Scalar_(_T v0, _T v1, _T v2, _T v3 = 0);
+    Scalar_(const Scalar_& s);
+    Scalar_(Scalar_&& s) noexcept;
+
+    Scalar_& operator=(const Scalar_& s);
+    Scalar_& operator=(Scalar_&& s) noexcept;
+
+    static Scalar_<_T> all(_T v0);
+  private:
+    _T val[4];
+
+    friend class GpuMat;
+  };
+
+  typedef Scalar_<double> Scalar;
+
   class GpuMat {
   public:
     GpuMat();
@@ -106,6 +125,12 @@ namespace acle {
     Size size() const;
 
     void release();
+
+    void create(int rows, int cols, int type);
+
+    void create(Size size, int type);
+
+    void setTo(Scalar s);
 
     int rows, cols, channels;
     size_t step;

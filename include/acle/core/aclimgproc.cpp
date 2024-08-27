@@ -57,7 +57,7 @@ namespace acle {
 		}
 
 		else {
-			E_LOG("Overlay error: Rendering with src1 channels={} and src2 channels={} is not supported yet.",
+			E_LOG("[aclimgproc::overlayGpuAlpha] Rendering with src1 channels={} and src2 channels={} is not supported yet.",
 				src1.channels, src2.channels);
 			return -1;
 		}
@@ -176,6 +176,26 @@ namespace acle {
 			return -1;
 		}
 		I_LOG("bg replace success");
+		return 0;
+	}
+
+	int Overlay::overlayGpuScale(const GpuMat& srcImg, GpuMat& dstImg, int w, int h) {
+		if (srcImg.empty()) {
+			E_LOG("[aclimgproc::overlayGpuScale] source Image data is empty.");
+			return -1;
+		}
+		if (w <= 0 || h <= 0) {
+			E_LOG("[aclimgproc::overlayGpuScale] input width {}, height {} is error.", w, h);
+			return -1;
+		}
+
+		if (w * h == srcImg.cols * srcImg.rows && w == srcImg.cols && h == srcImg.rows) {
+			D_LOG("[aclimgproc::overlayGpuScale] input w and h == src w {} and h {}");
+			return -1;
+		}
+		else {
+			MxBase::Resize(srcImg.tensor, dstImg.tensor, MxBase::Size(w, h));
+		}
 		return 0;
 	}
 

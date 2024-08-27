@@ -1,5 +1,6 @@
 #include <iostream>
 #include "acle/videoEngine23_acl.hpp"
+#include "acle/core/aclimgtrans.h"
 
 #include "seeker/common.h"
 
@@ -41,26 +42,29 @@ int main(int argc, char* argv[]) {
   int err = av_hwdevice_ctx_create(&hwCtx, AV_HWDEVICE_TYPE_ASCEND, deviceId.c_str(), NULL, 0);
 
   encoder.enableHwDevice(hwCtx, AV_PIX_FMT_ASCEND);
-  encoder.rateControlPreset(960000);
+  //encoder.rateControlPreset(960000);
   encodec_ctx = encoder.getContext();
   encodec_ctx->width = width;
   encodec_ctx->height = height;
-  encodec_ctx->bit_rate = 1200000;
-  encodec_ctx->time_base = { 1 , fps };
-  encodec_ctx->time_base.den = fps;
-  encodec_ctx->time_base.num = 1;
-  encodec_ctx->framerate = { fps , 1 };
+  //encodec_ctx->bit_rate = 1200000;
+  encodec_ctx->time_base = { 1 , 30 };
+  //encodec_ctx->time_base.den = fps;
+  //encodec_ctx->time_base.num = 1;
+  encodec_ctx->framerate = { 30 , 1 };
   encodec_ctx->pix_fmt = AV_PIX_FMT_ASCEND;
-  encodec_ctx->gop_size = 12;
-  encodec_ctx->profile = FF_PROFILE_H264_BASELINE;
-  encodec_ctx->level = 31;
-  encodec_ctx->max_b_frames = 0;
-  encodec_ctx->qmin = 10;
-  encodec_ctx->qmax = 51;
+  //encodec_ctx->gop_size = 12;
+  //encodec_ctx->profile = FF_PROFILE_H264_BASELINE;
+  //encodec_ctx->level = 31;
+  //encodec_ctx->max_b_frames = 0;
+  //encodec_ctx->qmin = 10;
+  //encodec_ctx->qmax = 51;
   AVDictionary* dict = nullptr;
-  av_dict_set_int(&dict, "delay", 0, 0);
-  av_dict_set_int(&dict, "forced-idr", 1, 0);
-  av_dict_set(&dict, "device_id", deviceId.c_str(), '0');
+  av_dict_set_int(&dict, "profile", 0, 0);
+  av_dict_set_int(&dict, "rc_mode", 0, 0);
+  av_dict_set_int(&dict, "gop", 12, 0);
+  av_dict_set_int(&dict, "frame_rate", 30, 0);
+  av_dict_set_int(&dict, "max_bit_rate", 8000, 0);
+  av_dict_set_int(&dict, "device_id", std::atoi(deviceId.c_str()), 0);
 
   encoder.open(dict);
   dict = nullptr;

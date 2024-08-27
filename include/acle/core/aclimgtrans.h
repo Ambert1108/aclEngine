@@ -8,6 +8,7 @@
 #include <MxBase/E2eInfer/GlobalInit/GlobalInit.h>
 #include "MxBase/E2eInfer/Image/Image.h"
 #include "MxBase/E2eInfer/ImageProcessor/ImageProcessor.h"
+#include "MxBase/E2eInfer/Tensor/TensorDvpp.h"
 
 extern "C" {
 	#include <libavcodec/avcodec.h>

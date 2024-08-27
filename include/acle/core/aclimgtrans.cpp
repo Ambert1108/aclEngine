@@ -89,15 +89,16 @@ namespace acle {
 		void* raw = copyData(src->data[0], totalSize, aclrtMemcpyKind::ACL_MEMCPY_DEVICE_TO_DEVICE, MemoryType::DVPP);
 		data = SHARED_PTR_DVPP_BUF(raw);
 		MxBase::Image image(data, totalSize, acl::deviceId, MxBase::Size(w, h));
-		MxBase::Tensor tensor(std::vector<uint32_t>{(uint32_t)h, (uint32_t)w, 3}, MxBase::TensorDType::UINT8, acl::deviceId);
-		MxBase::Tensor::TensorMalloc(tensor);
-		tensor = image.ConvertToTensor();
-		dst = GpuMat(h, w, ACLE_8UC3);
-		try { dst.tensor = image.ConvertToTensor(false, false); }
+		image.ToDevice(acl::deviceId);
+		MxBase::Tensor tensor(std::vector<uint32_t>{(uint32_t)h * 3 / 2, (uint32_t)w, 1}, MxBase::TensorDType::UINT8, acl::deviceId, true);
+		//MxBase::Tensor::TensorMalloc(tensor);
+		try { tensor = image.ConvertToTensor(false, false); }
 		catch (std::exception& ex) {
 			E_LOG("[aclimgtrans::frame_to_mat] catch exception:{}", ex.what());
 			return -1;
 		}
+		dst = GpuMat(h, w, ACLE_8UC3);
+		MxBase::CvtColor(tensor, dst.tensor, MxBase::CvtColorMode::COLOR_YUVSP4202RGB);
 
 		if (dst.tensor.IsEmpty()) {
 			W_LOG("[aclimgtrans::frame_to_mat] convert frame to mat failed");
@@ -106,38 +107,43 @@ namespace acle {
 		return 0;
 	}
 
-	int Transfer::gpu_transfer_mat_to_frame(GpuMat src_mat, AVFrame*& cuda_frame, AVPixelFormat target_format) {
-		if (cuda_frame->data == nullptr) {
-			cuda_frame = av_frame_alloc();
+	int Transfer::gpu_transfer_mat_to_frame(GpuMat src, AVFrame*& dst, AVPixelFormat format) {
+		if (dst->data == nullptr) {
+			dst = av_frame_alloc();
 		}
-		int w = src_mat.cols;
-		int h = src_mat.rows;
+		int w = src.cols;
+		int h = src.rows;
 
-		//target_format == AVPixelFormat::AV_PIX_FMT_YUV420P)
-		if (src_mat.empty()) {
-			E_LOG("Transfer error: src mat is empty");
+		if (src.empty()) {
+			E_LOG("[aclimgtrans::mat_to_frame] src mat is empty");
 			return -1;
 		}
-		if (src_mat.channels != 3) {
-			E_LOG("Transfer error: transfer mat channels is not 3");
+		if (src.channels != 3) {
+			E_LOG("[aclimgtrans::mat_to_frame] transfer mat channels is not 3");
 			return -1;
 		}
-		if (outFrame == nullptr || outFrame->width != src_mat.cols || outFrame->height != src_mat.rows) {
+		if (outFrame == nullptr || outFrame->width != src.cols || outFrame->height != src.rows) {
 			if (outFrame) {
 				av_frame_free(&outFrame);
 				outFrame = nullptr;
 			}
-			AVBufferRef* hwFramesCtx = createHwFrameCtx(hwCtx, AV_PIX_FMT_ASCEND, AV_PIX_FMT_YUV420P, w, h);
+			AVBufferRef* hwFramesCtx = createHwFrameCtx(hwCtx, AV_PIX_FMT_ASCEND, AV_PIX_FMT_NV12, w, h);
 			outFrame = av_frame_alloc();
 			int err = av_hwframe_get_buffer(hwFramesCtx, outFrame, 0);
 			if (err != 0)
 				throw std::runtime_error("error: av_hwframe_get_buffer failed.");
 			av_buffer_unref(&hwFramesCtx);
 		}
-		uint8_t* Data[3] = { outFrame->data[0], outFrame->data[1], outFrame->data[2] };
-		int Linesize[3] = { outFrame->linesize[0], outFrame->linesize[1], outFrame->linesize[2] };
-		//nppCtx->RGB_TO_YUV420P(src_mat, Data, Linesize);
-		av_frame_ref(cuda_frame, outFrame);
+		MxBase::Tensor tmp;
+		MxBase::CvtColor(src.tensor, tmp, MxBase::CvtColorMode::COLOR_RGB2YUVSP420);
+		tmp.ToDvpp(acl::deviceId);
+		uint8_t* data = static_cast<uint8_t*>(copyData(tmp.GetData(), tmp.GetByteSize(), aclrtMemcpyKind::ACL_MEMCPY_DEVICE_TO_DEVICE, MemoryType::DVPP));
+		// 拷贝 Y 平面数据
+		memcpy(outFrame->data[0], data, (size_t)w * h);
+
+		// 拷贝 UV 平面数据
+		memcpy(outFrame->data[1], data + w * h, ((size_t)w / 2) * (h / 2) * 2);
+		av_frame_ref(dst, outFrame);
 		return 0;
 	}
 }
