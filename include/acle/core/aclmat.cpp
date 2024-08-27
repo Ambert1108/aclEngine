@@ -40,9 +40,7 @@ namespace acle {
 		return *this;
 	}
 
-	template<typename _T> Scalar_<_T> Scalar_<_T>::all(_T v0) {
-		return Scalar_<_T>(v0, v0, v0, v0);
-	}
+	template class Scalar_<double>;
 
 	GpuMat::GpuMat() : rows(0.0), cols(0.0), channels(0), step(0), data(nullptr) {};
 

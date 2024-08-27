@@ -78,7 +78,7 @@ namespace acle {
     Scalar_& operator=(const Scalar_& s);
     Scalar_& operator=(Scalar_&& s) noexcept;
 
-    static Scalar_<_T> all(_T v0);
+    static Scalar_<_T> all(_T v0) { return Scalar_<_T>(v0, v0, v0, v0); }
   private:
     _T val[4];
 

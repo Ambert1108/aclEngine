@@ -37,4 +37,7 @@ namespace acle {
 		AVBufferRef* hwCtx = nullptr;
 		std::shared_ptr<uint8_t> data = nullptr;
 	};
+
+	typedef std::shared_ptr<Transfer> TransferSPtr;
+	typedef std::unique_ptr<Transfer> TransferUPtr;
 }
