@@ -27,6 +27,7 @@
 
 #include "seeker/common.h"
 #include <iostream>
+#include <thread>
 
 #define ALIGN_UP(num, align) (((num) + (align) - 1) & ~((align) - 1))
 
@@ -165,9 +166,11 @@ int main(int argc, char* argv[]) {
   //MxInitFromConfig("config.json");
   MxInit();
   {
-    test();
-    test();
-    test();
+    //test();
+    //test();
+    //test();
+    std::thread t{ &test };
+    t.join();
   }
   MxDeInit();
   I_LOG("test2 finish");

@@ -155,6 +155,6 @@ message("CMAKE_PREFIX_PATH:" ${CMAKE_PREFIX_PATH})
 include(${PROJECT_SOURCE_DIR}/include/acle/aclelink.cmake)
 message("acle cpp: ${ACLE}")
 
-#add_subdirectory(samples/mindX)
+add_subdirectory(samples/mindX)
 add_subdirectory(samples/Aclffmpeg)
 #add_subdirectory(samples/decandenc)
