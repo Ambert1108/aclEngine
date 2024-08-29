@@ -48,6 +48,7 @@ char* outputFilename = nullptr;
 AVBufferRef* hwCtx = nullptr;
 
 void work() {
+  aclrtSetDevice(std::atoi(deviceId.c_str()));
   AVPacket* pkt = av_packet_alloc();
   AVFrame* frame = av_frame_alloc();
   AVFrame* sftFrame = av_frame_alloc();
