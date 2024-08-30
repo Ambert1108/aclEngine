@@ -18,6 +18,7 @@
 #include "acl/acl.h"
 #include "acl/ops/acl_dvpp.h"
 #include "acl/acl_rt.h"
+#include "acl/acl_rt.h"
 
 #include "opencv2/core/hal/interface.h"
 

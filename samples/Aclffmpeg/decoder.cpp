@@ -2,6 +2,8 @@
 #include "acle/videoEngine23_acl.hpp"
 #include "acle/core/aclimgtrans.h"
 
+#include <acl/dvpp/hi_dvpp.h>
+
 #include <iostream>
 #include <thread>
 
@@ -67,6 +69,21 @@ void work() {
   demuxer.init(inputFilename, hwCtx);
   deoder.setCodecContext(demuxer.getContext());
   deoder.open();
+  hi_vdec_chn_param param;
+  hi_mpi_vdec_get_chn_param(0, &param);
+  I_LOG("current vdec param:\n\ttype:{}\n\tdisplay num:{}\n\tdec mode:{}\n\t"
+    "out order:{}\n\t", param.type, param.display_frame_num, param.video_param.dec_mode,
+    param.video_param.out_order);
+  param.display_frame_num = 0;
+  param.video_param.out_order = HI_VIDEO_OUT_ORDER_DEC;
+  int ret = hi_mpi_vdec_set_chn_param(0, &param);
+  if (ret != 0) {
+    E_LOG("set vdec chnl failed");
+  }
+  hi_mpi_vdec_get_chn_param(0, &param);
+  I_LOG("current vdec param:\n\ttype:{}\n\tdisplay num:{}\n\tdec mode:{}\n\t"
+    "out order:{}\n\t", param.type, param.display_frame_num, param.video_param.dec_mode,
+    param.video_param.out_order);
 
   int useCount = 1;
   int framecount = 1;
