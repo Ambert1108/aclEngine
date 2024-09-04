@@ -80,9 +80,6 @@ namespace acle {
 		if (w == 0) w = src->width;
 		if (h == 0) h = src->height;
 
-		uint8_t* yPlane = src->data[0]; // Y 平面指针
-		uint8_t* uvPlane = src->data[1]; // UV 平面指针
-
 		// 计算总数据大小
 		size_t totalSize = src->linesize[0] * h + src->linesize[1] * (h / 2);
 		if (data) data.reset();
@@ -98,7 +95,7 @@ namespace acle {
 			return -1;
 		}
 		dst = GpuMat(h, w, ACLE_8UC3);
-		MxBase::CvtColor(tensor, dst.tensor, MxBase::CvtColorMode::COLOR_YUVSP4202RGB);
+		MxBase::CvtColor(tensor, dst.tensor, MxBase::CvtColorMode::COLOR_YUVSP4202BGR);
 
 		if (dst.tensor.IsEmpty()) {
 			W_LOG("[aclimgtrans::frame_to_mat] convert frame to mat failed");
@@ -122,6 +119,7 @@ namespace acle {
 			E_LOG("[aclimgtrans::mat_to_frame] transfer mat channels is not 3");
 			return -1;
 		}
+		D_LOG("m2f --- 1 ---");
 		if (outFrame == nullptr || outFrame->width != src.cols || outFrame->height != src.rows) {
 			if (outFrame) {
 				av_frame_free(&outFrame);
@@ -134,16 +132,24 @@ namespace acle {
 				throw std::runtime_error("error: av_hwframe_get_buffer failed.");
 			av_buffer_unref(&hwFramesCtx);
 		}
+		//if (dstData) {
+		//	freeMemory(dstData, MemoryType::DVPP);
+		//	dstData = nullptr;
+		//	D_LOG("m2f --- 1.5 ---");
+		//}
+		D_LOG("m2f --- 2 ---");
 		MxBase::Tensor tmp;
-		MxBase::CvtColor(src.tensor, tmp, MxBase::CvtColorMode::COLOR_RGB2YUVSP420);
-		tmp.ToDvpp(acl::deviceId);
-		uint8_t* data = static_cast<uint8_t*>(copyData(tmp.GetData(), tmp.GetByteSize(), aclrtMemcpyKind::ACL_MEMCPY_DEVICE_TO_DEVICE, MemoryType::DVPP));
-		// 拷贝 Y 平面数据
-		memcpy(outFrame->data[0], data, (size_t)w * h);
-
-		// 拷贝 UV 平面数据
-		memcpy(outFrame->data[1], data + w * h, ((size_t)w / 2) * (h / 2) * 2);
+		MxBase::CvtColor(src.tensor, tmp, MxBase::CvtColorMode::COLOR_BGR2YUVSP420);
+		//tmp.ToDvpp(acl::deviceId);
+		D_LOG("m2f --- 3 ---");
+		//dstData = static_cast<uint8_t*>(copyData(tmp.GetData(), tmp.GetByteSize(), 
+		//	aclrtMemcpyKind::ACL_MEMCPY_DEVICE_TO_DEVICE, MemoryType::DVPP));
+		dstData = static_cast<uint8_t*>(tmp.GetData());
+		outFrame->data[0] = dstData;
+		outFrame->data[1] = dstData + w * h;
+		D_LOG("m2f --- 4 ---");
 		av_frame_ref(dst, outFrame);
+		D_LOG("m2f --- 5 ---");
 		return 0;
 	}
 }

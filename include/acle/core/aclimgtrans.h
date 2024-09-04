@@ -1,15 +1,15 @@
 // @brief: 昇腾图像数据转换封装
 // @copyright: Copyright seekloud 2024
 // @birth: [Ambert@2024.8.22]
-// @version: V0.0.1
-// @revision: [Ambert@2024.8.22]
+// @version: V0.0.2
+// @revision: [Ambert@2024.9.4]
 #pragma once
 
 #include <MxBase/E2eInfer/GlobalInit/GlobalInit.h>
 #include "MxBase/E2eInfer/Image/Image.h"
 #include "MxBase/E2eInfer/ImageProcessor/ImageProcessor.h"
 #include "MxBase/E2eInfer/Tensor/TensorDvpp.h"
-
+#include "acl/dvpp/hi_dvpp.h"
 extern "C" {
 	#include <libavcodec/avcodec.h>
 	#include <libavformat/avformat.h>
@@ -36,6 +36,8 @@ namespace acle {
 		AVFrame* outFrame = nullptr;
 		AVBufferRef* hwCtx = nullptr;
 		std::shared_ptr<uint8_t> data = nullptr;
+		uint8_t* dstData = nullptr;
+		void* data2 = nullptr;
 	};
 
 	typedef std::shared_ptr<Transfer> TransferSPtr;

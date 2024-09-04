@@ -122,6 +122,7 @@ void work() {
         av_packet_unref(pkt);
         continue;
       }
+      //std::this_thread::sleep_for(std::chrono::milliseconds(20));
       j = avcodec_receive_frame(codecCtx, frame);
       if (j == AVERROR(EAGAIN) || j == AVERROR_EOF) {
         W_LOG("decode prepare");

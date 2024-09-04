@@ -139,6 +139,7 @@ namespace acle {
   private:
     void* data;
     Size matSize;
+    bool mallocFlag = false;
 
     friend class Overlay;
     friend class Transfer;

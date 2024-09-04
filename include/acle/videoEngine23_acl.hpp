@@ -386,6 +386,7 @@ namespace acle {
         }
       }
       else {
+        I_LOG("[ve_acl] start init demuxer");
         int err;
         fmt_ctx = avformat_alloc_context();
         avcodec_free_context(&codec_ctx);

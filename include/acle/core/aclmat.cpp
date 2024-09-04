@@ -39,7 +39,7 @@ namespace acle {
 		for (int i = 0; i < 4; ++i) val[i] = std::move(s.val[i]);
 		return *this;
 	}
-
+	
 	template class Scalar_<double>;
 
 	GpuMat::GpuMat() : rows(0.0), cols(0.0), channels(0), step(0), data(nullptr) {};
@@ -69,12 +69,14 @@ namespace acle {
 	}
 
 	GpuMat& GpuMat::operator=(const GpuMat & gm) {
-		this->rows = gm.rows;
-		this->cols = gm.cols;
-		this->channels = gm.channels;
-		this->step = gm.step;
-		this->matSize = gm.matSize;
-		this->tensor = gm.tensor;
+		if (this != &gm) {
+			this->rows = gm.rows;
+			this->cols = gm.cols;
+			this->channels = gm.channels;
+			this->step = gm.step;
+			this->matSize = gm.matSize;
+			this->tensor = gm.tensor;
+		}
 		return *this;
 	}
 
@@ -264,6 +266,10 @@ namespace acle {
 			free(data);
 			data = nullptr;
 		}
+		if (mallocFlag) {
+			MxBase::Tensor::TensorFree(tensor);
+			mallocFlag = false;
+		}
 	}
 
 	void GpuMat::create(int rows, int cols, int type) {
@@ -284,7 +290,9 @@ namespace acle {
 			break;
 		}
 		tensor = MxBase::Tensor(std::vector<uint32_t>{ (uint32_t)rows, (uint32_t)cols, (uint32_t)channels }, MxBase::TensorDType::UINT8, acl::deviceId);
-		tensor.SetTensorValue(0);
+		MxBase::Tensor::TensorMalloc(tensor);
+		mallocFlag = true;
+		tensor.SetTensorValue(static_cast<uint8_t>(0));
 	}
 
 	void GpuMat::create(Size size, int type) {

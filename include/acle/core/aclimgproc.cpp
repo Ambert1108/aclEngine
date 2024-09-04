@@ -21,13 +21,13 @@ namespace acle {
 		//}
 
 		if (x + w > src2.cols || y + h > src2.rows || x < 0 || y < 0) {
-			E_LOG("[aclimgproc::overlayGpuAlpha] out of bound! x({})+w({}) > bottom width({}) or x({}) < 0; "
+			W_LOG("[aclimgproc::overlayGpuAlpha] out of bound! x({})+w({}) > bottom width({}) or x({}) < 0; "
 				"y({})+h({}) > bottom height({}) or y({}) < 0", x, w, src2.cols, x, y, h, src2.rows, y);
+			//Todo:后续需要选取未越界部分作为叠加素材
 			return -1;
 		}
 
-		src2.copyTo(dst, stream);
-		//stream.Synchronize();
+		if(dst.empty()) src2.copyTo(dst, stream);
 
 		acle::Rect roi(x, y, x + w, y + h);
 		acle::GpuMat roiMat = acle::GpuMat(dst, roi);
@@ -41,23 +41,23 @@ namespace acle {
 			T_LOG("1");
 		}
 		
-		else if (src1.channels == 3 && src2.channels == 4) {
+		else if (src1.channels == 3 && dst.channels == 4) {
 			
 			T_LOG("2");
 		}
 
-		else if (src1.channels == 4 && src2.channels == 4) {
+		else if (src1.channels == 4 && dst.channels == 4) {
 			
 			T_LOG("3");
 		}
 
-		else if (src1.channels == 3 && src2.channels == 3) {
+		else if (src1.channels == 3 && dst.channels == 3) {
 
 			T_LOG("4");
 		}
 
 		else {
-			E_LOG("[aclimgproc::overlayGpuAlpha] Rendering with src1 channels={} and src2 channels={} is not supported yet.",
+			E_LOG("Overlay error: Rendering with src1 channels={} and src2 channels={} is not supported yet.",
 				src1.channels, src2.channels);
 			return -1;
 		}
@@ -190,11 +190,22 @@ namespace acle {
 		}
 
 		if (w * h == srcImg.cols * srcImg.rows && w == srcImg.cols && h == srcImg.rows) {
-			D_LOG("[aclimgproc::overlayGpuScale] input w and h == src w {} and h {}");
+			E_LOG("[aclimgproc::overlayGpuScale] input w {} and h {} == src w {} and h {}",
+				w, h, srcImg.cols, srcImg.rows);
 			return -1;
 		}
 		else {
-			MxBase::Resize(srcImg.tensor, dstImg.tensor, MxBase::Size(w, h));
+			//dstImg.cols = srcImg.cols;
+			//dstImg.rows = srcImg.rows;
+			//dstImg.channels = srcImg.channels;
+			//dstImg.step = srcImg.step;
+			//dstImg.matSize = srcImg.matSize;
+			//MxBase::Tensor src, dst;
+			//MxBase::CvtColor(srcImg.tensor, src, MxBase::CvtColorMode::COLOR_RGBA2RGB);
+			//MxBase::Resize(src, dst, MxBase::Size(w, h));
+			//MxBase::CvtColor(dst, dstImg.tensor, MxBase::CvtColorMode::COLOR_RGB2RGBA);
+			//暂时不支持缩放rgba格式，调试中
+			srcImg.copyTo(dstImg);
 		}
 		return 0;
 	}
